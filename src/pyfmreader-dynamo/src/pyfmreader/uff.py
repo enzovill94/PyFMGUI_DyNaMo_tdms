@@ -1,0 +1,152 @@
+# File containing the UFF class.
+# Used to store data and metadata.
+
+from zipfile import ZipFile
+
+from .constants import *
+from .jpk.loadjpkcurve import loadJPKcurve
+from .jpk.loadjpkimg import computeJPKPiezoImg
+from .nanosc.loadnanosccurve import loadNANOSCcurve
+from .nanosc.loadnanoscimg import loadNANOSCimg
+from .ps_nex.loadpsnexcurve import loadPSNEXcurve
+from .ps_nex.loadpsneximg import loadPSNEXimg
+from .load_uff import loadUFFcurve
+from .save_uff import saveUFFtxt
+
+class UFF:
+    """
+    Class used to store the data and metadata of an AFM file.
+
+            Properties:
+                    filemetadata (dict): Dictionary containing the file metadata.
+                    isFV (bool): Flag indicating if the file is a Force Volume or not.
+                    piezoimg (np.array): 2D np.array containing the piezo image of the file.
+                    imagedata (dict): dictionary containing additional image data.
+            
+            Methods:
+                    getcurve
+                    getpiezoimg
+                    to_txt
+
+    """
+    def __init__(self):
+        self.filemetadata=None
+        # JPK Specific Atributes
+        self._sharedataprops=None
+        self._groupedpaths=None
+        # FV Specific Atribtues
+        self.isFV=None
+        self.piezoimg=None
+        # In files like JPK scans you may
+        # have additional image data.
+        self.imagedata=None
+    
+    def _loadcurve(self, curveidx, afmfile, file_type, z_sensor_delay = 1e-3, bool_correct_overshoot = True):
+        """
+        Hidden function used to load a single curve from a file.
+        
+        Supported formats:
+            - JPK --> .jpk-force, .jpk-force-map, .jpk-qi-data
+            - NANOSCOPE --> .spm, .pfc
+            - UFF --> .uff
+            - PS-NEX --> .tdms 
+
+                Parameters:
+                        curveidx (int): Index of curve to load.
+                        afmfile (ZipFile): Buffer containing the data of the AFM file. Only used for JPK files.
+                        file_type (str): File extension.
+                        z_sensor_delay (float): Z sensor delay value.
+                        bool_correct_overshoot (bool): Flag indicating whether to correct overshoot.
+
+                Returns:
+                        FC (utils.forcecurve.ForceCurve): ForceCurve object containing the force curve data.
+        """
+        if file_type in jpkfiles:
+            curvepaths = self._groupedpaths[curveidx]
+            FC = loadJPKcurve(
+                curvepaths, afmfile, curveidx, self.filemetadata
+            )
+        elif file_type[1:].isdigit() or file_type in nanoscfiles:
+            FC = loadNANOSCcurve(curveidx, self.filemetadata)
+        elif file_type in ufffiles:
+            FC = loadUFFcurve(self.filemetadata)
+        elif file_type in psnexfiles:
+            # z_sensor_delay = self.params.child('General Options').child('Z Sensor Delay').value()
+            # bool_correct_overshoot = self.params.child('General Options').child('Correct Overshoot').value()
+            # print (f"z_sensor_delay: {z_sensor_delay}, bool_correct_overshoot: {bool_correct_overshoot} ")
+            FC = loadPSNEXcurve(self.filemetadata,curveidx, z_sensor_delay, bool_correct_overshoot)    
+        return FC
+
+    def getcurve(self, curveidx, z_sensor_delay = 1e-3, bool_correct_overshoot = True):
+        """
+        Function used to load a single curve from a file.
+        
+        Supported formats:
+            - JPK --> .jpk-force, .jpk-force-map, .jpk-qi-data
+            - NANOSCOPE --> .spm, .pfc
+            - UFF --> .uff
+            - PS-NEX --> .tdms 
+
+
+                Parameters:
+                        curveidx (int): Index of curve to load.
+                        z_sensor_delay (float): Z sensor delay value.
+                        bool_correct_overshoot (bool): Flag indicating whether to correct overshoot.
+
+                Returns:
+                        FC (utils.forcecurve.ForceCurve): ForceCurve object containing the force curve data.
+        """
+        file_type = self.filemetadata['file_type']
+        if file_type in jpkfiles:
+            with open(self.filemetadata['file_path'], 'rb') as file:
+                afmfile = ZipFile(file)
+                FC = self._loadcurve(curveidx, afmfile, file_type)
+        elif file_type[1:].isdigit() or file_type in nanoscfiles:
+            FC = self._loadcurve(curveidx, None, file_type)
+        elif file_type in ufffiles:
+            FC = self._loadcurve(None, None, file_type)
+        elif file_type in psnexfiles:
+            FC = self._loadcurve(curveidx, None, file_type, 
+                                 z_sensor_delay, bool_correct_overshoot)
+        return FC
+    
+    def getpiezoimg(self):
+        """
+        Function used to compute the piezo image of a file.
+
+        It is required that the file is a Force Volume.
+        
+        Supported formats:
+            - JPK --> .jpk-force-map, .jpk-qi-data
+            - NANOSCOPE --> .spm, .pfc
+
+                Parameters: None
+                
+                Returns:
+                        piezoimg (np.array): 2D array containing the piezo image of the file.
+        """
+        file_type = self.filemetadata['file_type']
+        if file_type in jpkfiles:
+            self.piezoimg = computeJPKPiezoImg(self)
+        elif file_type[1:].isdigit() or file_type in nanoscfiles:
+            self.piezoimg = loadNANOSCimg(self.filemetadata)
+        elif file_type in psnexfiles:
+            print ("PS-NEX piezo image loading.")
+            self.piezoimg, _ = loadPSNEXimg(self)
+        return self.piezoimg
+    
+    def to_txt(self, savedir):
+        """
+        Function used to save the loaded data into a txt file following the UFF.
+
+                Parameters:
+                        savedir (str): Path to save the txt UFF file.
+                
+                Returns: None
+        """
+        if self.isFV:
+            for curveidx in range(self.filemetadata['Entry_tot_nb_curve']):
+                saveUFFtxt(self, self, savedir, curveidx)
+        else:
+            saveUFFtxt(self, self, savedir)
+        
