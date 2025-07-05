@@ -40,6 +40,7 @@ class UFF:
         # In files like JPK scans you may
         # have additional image data.
         self.imagedata=None
+        self._curve_cache = None  # Cache for loaded curves to avoid reloading
     
     def _loadcurve(self, curveidx, afmfile, file_type, z_sensor_delay = 1e-3, bool_correct_overshoot = True):
         """
@@ -61,6 +62,11 @@ class UFF:
                 Returns:
                         FC (utils.forcecurve.ForceCurve): ForceCurve object containing the force curve data.
         """
+        # Check cache first
+        # cache_key = (curveidx, z_sensor_delay, bool_correct_overshoot)
+        # if cache_key in self._curve_cache:
+        #     return self._curve_cache[cache_key]
+    
         if file_type in jpkfiles:
             curvepaths = self._groupedpaths[curveidx]
             FC = loadJPKcurve(
@@ -75,6 +81,12 @@ class UFF:
             # bool_correct_overshoot = self.params.child('General Options').child('Correct Overshoot').value()
             # print (f"z_sensor_delay: {z_sensor_delay}, bool_correct_overshoot: {bool_correct_overshoot} ")
             FC = loadPSNEXcurve(self.filemetadata,curveidx, z_sensor_delay, bool_correct_overshoot)    
+        
+
+        # Store the loaded curve in the cache
+        self._curve_cache = FC
+        print (self._curve_cache)
+            
         return FC
 
     def getcurve(self, curveidx, z_sensor_delay = 1e-3, bool_correct_overshoot = True):
@@ -106,8 +118,12 @@ class UFF:
         elif file_type in ufffiles:
             FC = self._loadcurve(None, None, file_type)
         elif file_type in psnexfiles:
-            FC = self._loadcurve(curveidx, None, file_type, 
-                                 z_sensor_delay, bool_correct_overshoot)
+            if self._curve_cache is not None:
+                # If the curve is already cached, return it
+                FC = self._curve_cache
+            else:
+                FC = self._loadcurve(curveidx, None, file_type,
+                                     z_sensor_delay, bool_correct_overshoot)
         return FC
     
     def getpiezoimg(self):

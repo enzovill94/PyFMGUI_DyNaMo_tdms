@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Created on Thu Feb 11 13:56:01 2021
 
@@ -13,6 +15,7 @@ from scipy.optimize import curve_fit  # For curve fitting
 import pandas as pd
 import statistics
 from math import *
+from pyfmreader import loadfile
 
 
 def grab_tdms(directory):
@@ -20,6 +23,7 @@ def grab_tdms(directory):
     This function gets all the tdms files of the directory
     and sorts them by time then returns the first file of
     the directory (the oldest file)
+
     Parameters
     ----------
     directory : str
@@ -29,9 +33,6 @@ def grab_tdms(directory):
     -------
     first_file: str
         The oldest file of the directory
-    
-    all_tdms : list of strings
-        The list of all the tdms files of the directory
 
     """
     all_tdms=[]
@@ -44,128 +45,48 @@ def grab_tdms(directory):
             #append these files on a list
             all_tdms.append(entry.path)
     # select the first file 
-    if not all_tdms:
-        raise FileNotFoundError("No .tdms files found in the directory")
-    first_file = all_tdms[0]
+    first_file= all_tdms[0]
     # return the first file and all the list to facilitate the navigation
     return first_file, all_tdms
 
 
-def parse_tdms(myfile, deflectionChannel='Deflection', zDisplacement = 'Z-pos', mainGroup = 'Force Curve'):
+def parse_tdms(myfile, Group = 'Force Curve', deflectionChannel = 'Deflection', zpiezo = 'Piezo'):
     """
     This function opens tdms file and extracts info
 
     Parameters
     ----------
     myfile : str
-        the tdms file path
-        
-    deflectionChannel : str
-        default = 'Deflection'
-        Name of group channel string under 
-    
-    zDisplacement : str
-        default = 'Z-pos'
-        
-    mainGroup : str
-        default = 'Force Curve'
+        the tdms file.
 
     Returns
     -------
-    channel_data_deflection_v : numpy array
+    channel_data_deflection : numpy array
 
-    channel_data_piezo_v : numpy array
-    
-    channel_time_ms : numpy array of time in index. ! need to convert !
+    channel_data_piezo : numpy array
 
     """
     with TdmsFile.open(myfile) as tdms_file:
         
-        channel_piezo= tdms_file[mainGroup][zDisplacement]
+        channel_piezo= tdms_file[Group][zpiezo]
         channel_data_piezo= channel_piezo[:]
-        channel_deflection= tdms_file[mainGroup][deflectionChannel]
+        channel_deflection= tdms_file[Group][deflectionChannel]
         channel_data_deflection= channel_deflection[:]
-        channel_time = channel_deflection.time_track()
-        
+
+        time = channel_deflection.time_track()*1000 #miliseconds
 
     #using 'with open' closes the file automatically at the end of the operation
-    return channel_data_deflection, channel_data_piezo, channel_time
+    return channel_data_deflection, channel_data_piezo, time
 
 
-def process_tdms_file(myfile):
-    """
-    This function processes a TDMS file and extracts channel data and time information.
-
-    Parameters
-    ----------
-    myfile : str
-        The path to the TDMS file.
-
-    Returns
-    -------
-    channel_dict : dict
-        A dictionary with channel names as keys and channel data as values.
-    time : numpy array
-        An array containing the time information.
-    """
-    with TdmsFile.open(myfile) as tdms_file:  
-        all_groups = tdms_file.groups()
-        main_group = all_groups[0].name
-        channels = tdms_file[main_group].channels()
-        # print(f'all_groups: {all_groups[0]}')
-        channel_dict = {}
-        channel_names_dict = {}
-        i = 0 
-        for channel in channels:
-            # print(f'channel: {channel.name}')   
-            channel_dict[channel.name] = tdms_file[main_group][channel.name][:]   
-            channel_names_dict[i] = tdms_file[main_group][channel.name].name
-            i += 1
-        # print(channel_dict)
-        # print (channel_names_dict)
-        dt = tdms_file[main_group][channel_names_dict[0]].properties["wf_increment"]
-        time_us = tdms_file[main_group][channel_names_dict[0]].time_track()
-        time = time_us*dt
-    return channel_dict, time
-
-def get_channel_names(myfile):
-    """
-    This function retrieves the channel names from a TDMS file.
-
-    Parameters
-    ----------
-    myfile : str
-        The path to the TDMS file.
-
-    Returns
-    -------
-    channel_names_dict : dict
-        A dictionary with channel indices as keys and channel names as values.
-    main_group : str
-        The name of the main group in the TDMS file.
-    dt : float
-        The waveform increment property of the first channel.
-    """
-    with TdmsFile.open(myfile) as tdms_file:  
-        all_groups = tdms_file.groups()
-        main_group = all_groups[0].name
-        channels = tdms_file[main_group].channels()
-        channel_names_dict = {}
-        i = 0 
-        for channel in channels:
-            channel_names_dict[i] = tdms_file[main_group][channel.name].name
-            i += 1
-        dt = tdms_file[main_group][channel_names_dict[0]].properties["wf_increment"]
-    return channel_names_dict, main_group, dt
-
-def DeflectionInNanometer(channel_data_deflection, invOLS):
+def DeflectionInNanometer( channel_data_deflection, invOLS):
     """
     This function takes the deflection in Volts and 
     retunns the deflection in nanometer
 
     Parameters
     ----------
-    channel_data_deflection : np array\
+    channel_data_deflection : np array
         The deflection in volts.
     invOLS : int
         
@@ -179,6 +100,130 @@ def DeflectionInNanometer(channel_data_deflection, invOLS):
     deflection= channel_data_deflection *invOLS
     return deflection 
 
+def GetForceDistAndParms_psnex(tdms_filepath):
+    """
+    Extracts force-distance data and relevant parameters from a TDMS file containing PSNEX HS AFM force spectroscopy curves.
+
+    This function loads a TDMS file, processes the force curve data, and extracts the distance, force, and key calibration parameters.
+    It also segments the force curve into approach, contact, and retract regions, returning indices and timing information for each segment.
+
+    tdms_filepath : str
+        Path to the TDMS file containing the AFM force curve data.
+
+    distance_nm : np.ndarray
+        The piezo position (distance) in nanometers for the entire force curve.
+    force_pN : np.ndarray
+        The cantilever deflection (force) in picoNewtons for the entire force curve.
+        Spring constant of the cantilever in N/m.
+        Inverse optical lever sensitivity in nm/V.
+    deflection_sensitivity : float
+        Deflection sensitivity in m/V.
+    piezo_gain : float
+        Piezo gain (currently set to 1, not implemented).
+    index_end_approach : int
+        Index of the last point in the approach segment.
+    index_start_approach : int
+        Index of the first point in the approach segment.
+    index_start_retract : int
+        Index of the first point in the retract segment.
+    index_end_retract : int
+        Index of the last point in the retract segment.
+    contact_pts : int
+        Number of points in the contact segment.
+    time : np.ndarray
+        Time array corresponding to the force curve data points.
+
+    Notes
+    -----
+    - The function assumes the TDMS file contains metadata fields such as 'defl_sens_nmbyV', 'spring_const_Nbym', 'height_channel_key', 
+      'invOLS_(nm/V)', 'start_indices', 'end_indices', 'numPnts', and 'relative_sr'.
+    - Only the first force curve (index 0) is processed.
+    - The function prints segment information for debugging purposes.
+
+    """
+    # directory = '/Users/evillz/Data/article/2025_07_01_THP1_phd/cell2/600'
+    # first_file, all_files = tdms.grab_tdms(directory)
+
+
+    # Load File
+    file = loadfile(tdms_filepath)
+    filemetadata = file.filemetadata
+    print(filemetadata['file_type'])
+
+    # metadata
+    file_deflection_sensitivity = filemetadata['defl_sens_nmbyV'] #nm/V
+    K = filemetadata['spring_const_Nbym'] #N/m
+    height_channel = filemetadata['height_channel_key']
+
+    deflection_sensitivity = file_deflection_sensitivity / 1e9 #m/V
+    invOLS = filemetadata['invOLS_(nm/V)']
+
+    # print(f"Closed loop: {closed_loop}")
+    print(f"Height channel: {height_channel}")
+    print(f"Deflection Sens.: {deflection_sensitivity} m/V")
+    print(f"Spring Constant: {K} N/m")
+
+    # Select curve by index
+    curve_idx = 0
+    force_curve = file.getcurve(curve_idx, bool_correct_overshoot=False, z_sensor_delay=1e-3)
+
+    start_indices = filemetadata['start_indices']
+    end_indices = filemetadata['end_indices']
+    nm_pnts = filemetadata['numPnts']
+
+    # Preprocess curve
+    force_curve.preprocess_force_curve(deflection_sensitivity, height_channel)
+
+    # To get each segment
+    fc_segments = force_curve.get_segments()
+    n_segments = len(fc_segments)
+    segment_types = [segment.segment_type for _, segment in fc_segments]
+    print("Segment types:", segment_types)
+
+
+    for segid, segment in fc_segments:
+        seg_type = segment.segment_type.lower()
+        if seg_type == 'app':
+            # You can add specific processing for approach here
+            index_end_approach = end_indices[segid]
+            index_start_approach = start_indices[segid]
+            print(f"Segment {segid}: Approach, {index_start_approach}:{index_end_approach}")
+        elif seg_type == 'con':
+            # You can add specific processing for contact here
+            contact_pts  = nm_pnts[segid]
+            print(f"Segment {segid}: Contact, #pnts: {contact_pts}")
+        elif seg_type == 'ret':
+            # You can add specific processing for retract here
+            index_end_retract = end_indices[segid]
+            index_start_retract = start_indices[segid]
+            print(f"Segment {segid}: Retract, {index_start_retract}:{index_end_retract}")
+        else:
+            print(f"Segment {segid}: Unknown type '{segment.segment_type}'")
+
+    zheight_list = []
+    vdeflection_list = []
+    time_list = []
+
+    relative_dt = filemetadata['relative_sr']
+
+    for dt, nm_pnt in zip(relative_dt, nm_pnts):
+        print(dt, nm_pnt)
+        # Create a time array for each segment based on dt and number of points
+        time_segment = np.arange(nm_pnt) * dt
+        time_list.append(time_segment)
+
+
+    for segid, segment in fc_segments:
+        zheight_list.append(segment.zheight)
+        vdeflection_list.append(segment.vdeflection)
+
+    distance_nm = np.concatenate(zheight_list)
+    force_pN = np.concatenate(vdeflection_list)
+    piezo_gain = 1 # not implemented, Forced to 1
+    time = np.concatenate(time_list)
+
+    # plt.plot(distance_nm, force_pN)
+    return distance_nm, force_pN, K, invOLS, deflection_sensitivity, piezo_gain, index_end_approach, index_start_approach, index_start_retract, index_end_retract, int(contact_pts),time
 
 def GetForceDistAndParms(directory, channel_data_deflection, channel_data_piezo, time):
 
@@ -194,8 +239,6 @@ def GetForceDistAndParms(directory, channel_data_deflection, channel_data_piezo,
         a matrix containing the deflection data in volts.
     channel_data_piezo : np array
         a matrix containing the pizeo mouvement in volts.
-    time : np array
-        time array in whatever units the in input
 
     Returns
     -------
@@ -226,7 +269,6 @@ def GetForceDistAndParms(directory, channel_data_deflection, channel_data_piezo,
     force= []
     distance= []
     approach=[]
-    contact=[]
     retract=[]
     S1S2=[]
     S4S5=[]
@@ -239,61 +281,37 @@ def GetForceDistAndParms(directory, channel_data_deflection, channel_data_piezo,
       #  print(line)
         if "Sensitivity" in line:
             sensitivity= float(line.split()[-1])
-        elif "invOLS" in line:
+        if "invOLS" in line:
             invOLS= float(line.split()[-1]) #unit: nm/V
-        elif "K" in line:
+        if "K" in line:
             K= float(line.split()[-1]) #unit N/m
           #  print(K)
-        elif "Piezo Gain" in line:
+        if "Piezo Gain" in line:
             piezo_gain= float(line.split()[-1])
-        elif "Dec Factor (approach)" in line:
+        if "Dec Factor (approach)" in line:
             real_sample_rate_approach= float(line.split()[-1])
         
-        elif "Dec Factor (Retract)" in line:
+        if "Dec Factor (Retract)" in line:
             real_sample_rate_retract= float(line.split()[-1])
-
-        elif "Dec Factor (Contact)" in line:
-            dec_factor_contact= float(line.split()[-1])
                      
-        elif line.startswith("S1"):
-            S1S2.append(float(line.split()[-1]))
-
-        elif line.startswith("S2"):
-            S1S2.append(float(line.split()[-1]))
-                
-        elif line.startswith("S3"):
-            S3_ms = (float(line.split()[-1]))
             
-        elif line.startswith("S4"):
+        if line.startswith("S1"):
+            S1S2.append(float(line.split()[-1]))
+        if line.startswith("S2"):
+            S1S2.append(float(line.split()[-1]))
+            
+        if line.startswith("S4"):
             S4S5.append(float(line.split()[-1]))
-
-        elif line.startswith("S5"):
-            S4S5.append(float(line.split()[-1])) 
-
-        elif line.startswith("f1"):
-            f0 = (float(line.split()[-1])) 
-
-        elif line.startswith("f2"):
-            f1 = (float(line.split()[-1]))    
-
-        elif "WFM Type (Basic 0, Chirp 1)" in line:
-            WFM_Type= (int(line.split()[-1]))
-            print(WFM_Type)
- 
-        elif "Approach_S1S2" in line:
+        if line.startswith("S5"):
+            S4S5.append(float(line.split()[-1]))      
+        
+        if "Approach_S1S2" in line:
             approach_S1S2= float(line.split()[-1])
-
-        elif "Approach_S2" in line:
-            approach_S1S2= float(line.split()[-1])
-
-        elif "Retract_S4S5" in line:
+        if "Retract_S4S5" in line:
             retract_S4S5= float(line.split()[-1])
-
-        elif "Retract_S4" in line:
-            retract_S4S5= float(line.split()[-1])     
-
-        elif line.startswith("Contact_S3"):
-            contact_pts= float(line.split()[-1])
+            
+        if line.startswith("Contact_S3"):
+            dwell= float(line.split()[-1])
 
     file.close()
 
@@ -303,13 +321,12 @@ def GetForceDistAndParms(directory, channel_data_deflection, channel_data_piezo,
     approach[:] = [x * coef for x in approach]
 
   #  print("retract", retract)
-    # time_retract =[]
+    time_retract =[]
 
     for i in S4S5:
         retract.append(i*real_sample_rate_approach)
 
-    coef_contact= contact_pts / dec_factor_contact
-    print(coef_contact, dec_factor_contact)
+
 
     coef= retract_S4S5/ sum(retract)
     retract[:] = [x * coef for x in retract]
@@ -353,129 +370,7 @@ def GetForceDistAndParms(directory, channel_data_deflection, channel_data_piezo,
 
 
 
-    return distance, force, K, invOLS, sensitivity, piezo_gain, index_end_approach, index_start_approach, index_start_retract, index_end_retract, int(contact_pts),time
-
-
-
-def GetForceDistAndParms_lv(directory, channel_data_deflection, channel_data_piezo, time):
-
-    """
-    This function converts deflection & piezo movement
-    and extracts the information from the parameter file
-
-    Parameters
-    ----------
-    directory : str
-        the current directory containing the parameter file
-    channel_data_deflection : np array
-        a matrix containing the deflection data in volts.
-    channel_data_piezo : np array
-        a matrix containing the piezo movement in volts.
-    time : np array
-        time array in whatever units the input
-
-    Returns
-    -------
-    distance : list
-        the distance in nanometers (indentation/separation).
-    force : list
-        the force in pN.
-    K : float
-        K represents the spring constant.
-    invOLS : float
-        (nm/V)
-    Sensitivity: float
-        in (nm/V).
-    parameters : dict
-        A dictionary containing all extracted parameters.
-    """
-
-    import os
-    import numpy as np
-
-    for root, dirs, files in os.walk(os.path.abspath(directory)):
-        for file in files:
-            if file.endswith(".dat"):
-                parms_file = os.path.join(os.path.abspath(root), file)
-        break
-
-    file = open(parms_file, "r")
-
-    force = []
-    distance = []
-    approach = []
-    contact = []
-    retract = []
-    S1S2 = []
-    S4S5 = []
-    
-    parameters = {}  # Dictionary to store parameters
-
-    lines = file.readlines()
-    for line in lines:
-        if line.strip():
-            key_value = line.split("\t") if "\t" in line else line.split()
-            if len(key_value) == 2:
-                key, value = key_value
-                try:
-                    value = float(value) if '.' in value or 'e' in value.lower() else int(value)
-                except ValueError:
-                    pass
-                parameters[key.strip()] = value
-
-    file.close()
-
-    # Extract essential parameters
-    K = parameters.get("K (N/m)", 0.1)
-    invOLS = parameters.get("invOLS (nm/V)", 50)
-    sensitivity = parameters.get("Sensitivity (nm/V)", 10.4)
-    piezo_gain = parameters.get("Piezo Gain", 2.085)
-    real_sample_rate_approach = parameters.get("Dec Factor (approach)", 1000)
-    real_sample_rate_retract = parameters.get("Dec Factor (Retract)", 1)
-    dec_factor_contact = parameters.get("Dec Factor (Contact)", 1)
-    contact_pts = parameters.get("Contact_S3", 200000)
-    approach_S1S2 = parameters.get("Approach_S2", 220)
-    retract_S4S5 = parameters.get("Retract_S4", 220000)
-
-    for i in [parameters.get("S1", 0), parameters.get("S2", 0)]:
-        S1S2.append(i)
-        approach.append(i * real_sample_rate_retract)
-
-    coef = approach_S1S2 / sum(approach)
-    approach[:] = [x * coef for x in approach]
-
-    for i in [parameters.get("S4", 0), parameters.get("S5", 0)]:
-        S4S5.append(i)
-        retract.append(i * real_sample_rate_approach)
-
-    coef_contact = contact_pts / dec_factor_contact
-    coef = retract_S4S5 / sum(retract)
-    retract[:] = [x * coef for x in retract]
-
-    approach = sorted(approach)
-    index_start_approach = int(approach[0])
-    index_end_approach = int(approach_S1S2)
-
-    retract = sorted(retract)
-    index_start_retract = int(approach_S1S2)
-    index_end_retract = len(channel_data_deflection)
-
-    for i in channel_data_deflection:
-        force.append(i * K * invOLS * 1e+12 * 10 ** -9)  # force in pN
-
-    for i in channel_data_piezo:
-        distance.append(i * sensitivity * piezo_gain)  # distance in nm
-
-    time[index_start_approach:index_end_approach] = np.flip(
-        time[index_start_approach:index_end_approach] * real_sample_rate_approach)
-    time[index_start_approach:index_end_approach] = time[index_start_approach:index_end_approach] - max(
-        time[index_start_approach:index_end_approach])
-
-    time[index_start_retract:index_end_retract] = time[index_start_retract:index_end_retract] * real_sample_rate_retract
-
-    return distance, force, K, invOLS, sensitivity, piezo_gain, index_end_approach, index_start_approach, index_start_retract, index_end_retract, int(contact_pts), time, parameters
-
-
+    return distance, force, K, invOLS, sensitivity, piezo_gain, index_end_approach, index_start_approach, index_start_retract, index_end_retract, dwell,time
 
 # Calculate the value :
 def calc_sine(x,a,b,c,d):
@@ -615,14 +510,37 @@ def CorrectDeflectionFromRetract(deflection, distance,  Npoly, index_start_appro
    #     print('coeff of polynomial', za) 
         pa = np.poly1d(za)    #equation
    #     print('equation ', pa)
-    
+
+        # Check if size of deflection and distance are the same and account for it
+        pnt_rem = abs(len(distance)-len(dist_retract))
+
+        pnt_remove = len(distance)-len(deflection)
+        if pnt_remove < 0 :
+            deflection = deflection[:pnt_remove]  
+        else :
+            distance = distance[pnt_rem:]
+
+        print(f'len_distance: {len(distance)}, len_deflection: {len(deflection)}')
+       
+        if pnt_rem != 0:
+            if len(deflection_retract) > len(dist_retract):
+                deflection_retract_polyfit = deflection_retract[index_end_r:-pnt_rem]
+                distance_retract_polyfit = dist_retract[index_end_r:]
+            else:
+                deflection_retract_polyfit = deflection_retract[index_end_r:]
+                distance_retract_polyfit = dist_retract[index_end_r:]
+
+        print(f'length_Deflection_retract: {len(deflection_retract_polyfit)} length_distance_retract: {len(distance_retract_polyfit)}')
+            
+
        # corrected_deflection_approach= deflection_approach - pa(dist_approach)
-        z = np.polyfit(dist_retract[index_end_r:], deflection_retract[index_end_r:], Npoly)
+        z = np.polyfit(distance_retract_polyfit, deflection_retract_polyfit, Npoly)
         p = np.poly1d(z)    #equation
         
         corrected_deflection= np.zeros(len(deflection))
-        for i in range(len(deflection[index_start_retract: index_end_retract])):
-            corrected_deflection[index_start_retract: index_end_retract][i]= deflection_retract[i]- p(distance[index_start_retract: index_end_retract][i])
+        for i in range(len(deflection[index_start_retract: index_end_retract - pnt_rem])):
+            print(f'break{i}')
+            corrected_deflection[index_start_retract: index_end_retract][i]= deflection_retract[i]- p(distance[index_start_retract: index_end_retract][i] - pnt_rem)
         
         for i in range(len(deflection[index_start_approach: index_end_approach])):
             corrected_deflection[index_start_approach: index_end_approach][i]= deflection_approach[i] - pa(dist_approach[i])
@@ -738,8 +656,10 @@ def ApplySavgol(data, window):
         a matrix containing the smoothed data.
 
     """
-    smoothed= scipy.signal.savgol_filter(data, window, 3) # window size 51, polynomial order 3
+    smoothed= scipy.signal.savgol_filter(data, window, 1) # window size 51, polynomial order 3
     return smoothed
+
+
 
 
 def downsampling(data, pts):
@@ -747,12 +667,12 @@ def downsampling(data, pts):
     """
     Parameters
     ----------
-    filepath : str
+    data : array
         array of data.
 
     Returns
     -------
-    dict
+    Panda data frame of downsampled data
         
 
     """
@@ -764,45 +684,39 @@ def downsampling(data, pts):
     new_sample=pd.DataFrame(new_sample)
     return new_sample[0]
 
+# file="example_Ismahene/F_Curve_Basic_S4_100.00_50.tdms"
+# channel_data_deflection, channel_data_piezo, time= parse_tdms(file)
+# distance, force, K, invOLS, sensitivity, piezo_gain, index_end_approach, index_start_approach, index_start_retract, index_end_retract, dzell, timeA, timeR=GetForceDistAndParms("example_Ismahene/", channel_data_deflection, channel_data_piezo,time)
+# extension= ComputeExtension(force, distance, K)
+# extension= extension+max(extension)
+# Npoly= 99
+# percentage=90
+# ##APART
+# #corrected_deflection= CorrectVirtualDeflection( np.flipud(channel_data_deflection), np.flipud(distance),  Npoly, index_start_approach, index_end_approach, index_start_retract, index_end_retract, percentage, hysteresis=35)
+#
+# #corrected_deflection= np.flipud(corrected_deflection)
+# ##########
+# corrected_deflection= CorrectVirtualDeflection( channel_data_deflection, distance,  Npoly, index_start_approach, index_end_approach, index_start_retract, index_end_retract, percentage, hysteresis=35)
+#
+# distance, force=FDmodifParms(corrected_deflection, channel_data_piezo, K, invOLS, piezo_gain, sensitivity)
+# plt.plot(extension[index_start_retract: index_end_retract], force[index_start_retract: index_end_retract], label='hysteresis applied')
+# plt.plot(extension[index_start_approach: index_end_approach], force[index_start_approach: index_end_approach], label='hysteresis applied')
 
-def read_parameter_file(filepath):
-    """
-    Parameters
-    ----------
-    filepath : str file path of .dat parameter file
+# plt.legend()
+#Npoly= 99
+#percentage=90
+#corrected_deflection= CorrectVirtualDeflection( channel_data_deflection, distance,  Npoly, index_start_approach, index_end_approach, index_start_retract, index_end_retract, percentage)
+#distance, force=FDmodifParms(corrected_deflection, channel_data_piezo, K, invOLS, piezo_gain, sensitivity)
 
-    Returns
-    -------
-    parameters: dictionary of parameter files and their values in string
-        
+#plt.plot(extension[index_start_retract: index_end_retract], force[index_start_retract: index_end_retract])
+#plt.plot(extension[index_start_approach: index_end_approach], force[index_start_approach: index_end_approach])
 
-    """
-    
-    parameters = {}
-    with open(filepath, 'r') as file:
-        for line in file:
-            # Skip empty lines
-            if not line.strip():
-                continue
-            # Split the line by any whitespace characters (spaces, tabs, etc.)
-            key_value = line.strip().split()
-            
-            # If the line has exactly two parts, treat it as key-value
-            if len(key_value) == 2:
-                key, value = key_value
-                
-                # Try to convert values to int or float if possible
-                try:
-                    value = int(value)
-                except ValueError:
-                    try:
-                        value = float(value)
-                    except ValueError:
-                        pass
-                
-                parameters[key] = value
-            else:
-                # If the line doesn't match the expected pattern, store it as a string.
-                parameters[line.strip()] = ""
-    
-    return parameters
+# axs[1].grid()
+# distance, force=FDmodifParms(corrected_deflection, channel_data_piezo, K, invOLS, piezo_gain, sensitivity)
+# axs[1].plot(extension[index_start_retract: index_end_retract], force[index_start_retract: index_end_retract])
+# axs[1].plot(extension[index_start_approach: index_end_approach], force[index_start_approach: index_end_approach])
+# #axs[1].set_title('without hysteresis')
+
+#plt.savefig('corrected_deflection_hysteresis.pdf')
+#plt.plot(extension, channel_data_deflection)
+# #plt.plot(time, channel_data_deflection)

@@ -194,7 +194,16 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
     segment_metadata[f"segment_{segment_id}_velocity(V/tick)"] = float(ps_nex_meta.get(f"segment_{segment_id}_velocity(V/tick)"))
     segment_metadata[f"segment_{segment_id}_Z_position_setpoint_trigger_(V)"] = float(ps_nex_meta.get(f"segment_{segment_id}_Z_position_setpoint_trigger_(V)"))
     segment_metadata[f"segment_{segment_id}_zpiezo_control_out"] =ps_nex_meta.get(f"segment_{segment_id}_zpiezo_control_out")
-    seg_i_pt_cal = int((segment_metadata[f"segment_{segment_id}_duration_(ticks)"]*segment_metadata[f'segment_{segment_id}_sampling_rate_(S/s)']*tick_time_s)/segment_metadata[f'segment_{segment_id}_dec_factor'])
+    # seg_i_pt_cal = int((segment_metadata[f"segment_{segment_id}_duration_(ticks)"]\
+                        # *segment_metadata[f'segment_{segment_id}_sampling_rate_(S/s)'] \
+                        # *tick_time_s)/segment_metadata[f'segment_{segment_id}_dec_factor'])
+    
+    # Compute the number of points in the segment
+    sizes_seg_tick = int(segment_metadata[f"segment_{segment_id}_duration_(ticks)"])
+    seg_sampling_rate = segment_metadata[f'segment_{segment_id}_sampling_rate_(S/s)']
+    dec_seg = segment_metadata[f'segment_{segment_id}_dec_factor']
+    relative_SR = (1 / seg_sampling_rate * dec_seg) / tick_time_s
+    seg_i_pt_cal = int(sizes_seg_tick/relative_SR)
     segment_metadata[f"segment_{segment_id}_nb_points_cal"] =seg_i_pt_cal
 
     # added by Lorenzo june 10 2025

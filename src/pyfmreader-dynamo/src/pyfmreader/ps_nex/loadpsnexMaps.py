@@ -15,6 +15,7 @@ import time
 import re
 from datetime import datetime
 from pathlib import Path
+import seaborn as sns
 
 def checkMapFileNULL(directory, CSVfile=True):
     """

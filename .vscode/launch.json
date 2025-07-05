@@ -1,0 +1,49 @@
+// {
+//     // Use IntelliSense to learn about possible attributes.
+//     // Hover to view descriptions of existing attributes.
+//     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+//     "version": "0.2.0",
+//     "configurations": [
+//         {
+//             "name": "Python Debugger: Current File",
+//             "type": "debugpy",
+//             "request": "launch",
+//             "program": "${file}",
+//             "console": "integratedTerminal"
+//         }
+//     ]
+// }
+
+{
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "type": "debugpy",
+            "request": "launch",
+            "name": "Launch PyFMGUI DyNaMo",
+            "program": "${workspaceFolder}/PyFMGUI_DyNaMo/src/main.py"
+        },
+        {
+            "type": "debugpy",
+            "request": "launch",
+            "name": "Launch AFM FS Interface",
+            "program": "${workspaceFolder}/src/afm_fs/interface.py"
+        },
+            {
+            "name": "Debug hack_gui_working_YS",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/yogiboi/hack_gui_working.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug TetherViewerWidget with File",  // Appears in the debug dropdown
+            "type": "debugpy",                             // Correct for Python debugging
+            "request": "launch",                           // You're launching a file, not attaching
+            "program": "${workspaceFolder}/PyFMGUI_DyNaMo/src/test/test_testher_openfile.py",  // Full path to your entrypoint script
+            "console": "integratedTerminal"                // Uses VS Code terminal for I/O
+        }
+
+    ]
+}

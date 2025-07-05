@@ -1,0 +1,3 @@
+file name	rupt number	rupt force (pN)	rupt time (s)	rupt sep (nm)	keff (pN/nm)	veff (nm/s)	loading rate (pN/s)	vBwd_exp (nm/s)	peak work (pN* nm)	cumulative peak work (pN* nm)	incremental peak work (pN* nm)	invOLS (nm/V)	Zsens (nm/V)	trigger thres (pN)	indentation (nm)	vBwd (nm/s)	kcanti (pN/nm)
+ForceMap22.ARDF_L0_P4	1	7.20e+02	2.29e-03	6.41e+00	9.55e+01	1.07e+02	2.38e+06	5.77e+02	2.59e+05	2.41e+03	2.41e+03	6.79e-17	1.38e-06	-1.47e+02	-0.9441902725840274	1.21e+05	6.88e+01
+ForceMap22.ARDF_L0_P4	1	7.20e+02	2.29e-03	6.41e+00	9.55e+01	1.07e+02	2.38e+06	5.77e+02	2.59e+05	2.41e+03	2.41e+03	6.79e-17	1.38e-06	-1.47e+02	-0.9441902725840273	1.21e+05	6.88e+01
