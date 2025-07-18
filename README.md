@@ -1,4 +1,4 @@
-# ⚠️ PYFMGUI Archived
+# ⚠️ PyFMGUI_DyNaMo Archived
 
 **This repository is no longer maintained.**
 
