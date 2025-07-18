@@ -11,6 +11,7 @@ pyFM_VERSION = "PyFMLab v.1.0.2"
 # FILE CONSTANTS ##################################################
 jpk_file_extensions = ('jpk-force', 'jpk-force-map', 'jpk-qi-data')
 nanoscope_file_extensions = ('spm', 'pfc')
+psnex_file_extension = ('psnex', 'tdms','PSNEX.tdms')
 
 # ANALYSIS CONSTANTS ##############################################
 available_geometries = ['paraboloid', 'cone', 'pyramid']
@@ -54,6 +55,13 @@ class AnalysisParams(pTypes.GroupParameter):
                 {'name': 'Overwrite Working Ind.', 'type': 'bool', 'value':False},
                 {'name': 'Max Frequency', 'type': 'int', 'value': None, 'units':'Hz'},
                 {'name': 'B Coef', 'type': 'float', 'value': None, 'units':'Ns/m'}
+            ])
+
+        elif self.mode == "tether":
+            self.addChildren([
+                {'name': 'Tether Length', 'type': 'float', 'value': 0, 'units':'nm'},
+                {'name': 'Tether Stiffness', 'type': 'float', 'value': 0, 'units':'pN/nm'},
+                {'name': 'Tether Damping', 'type': 'float', 'value': 0, 'units':'pN·s/nm'}
             ])
         
         self.contact_model = self.param('Contact Model')
@@ -260,15 +268,17 @@ class TingFitParams(pTypes.GroupParameter):
             self.param('Poly. Order').show(False)
             self.param('Ramp Speed').show(False)
 
+
 class CantileverParams(pTypes.GroupParameter):
     def __init__(self, **opts):
         pTypes.GroupParameter.__init__(self, **opts)
         self.addChildren([
-            {'name': 'Canti Id', 'type': 'list', 'limits': list(canti_list.keys())},
-            {'name': 'Canti Shape', 'type': 'list', 'limits': ['Rectangular', 'V Shape']},
-            {'name': 'Lenght', 'type': 'float', 'value': 0, 'units':'um'},
+            {'name': 'Canti Id', 'type': 'list', 'limits': list(canti_list.keys()), 'value': 'Custom'},
+            {'name': 'Canti Shape', 'type': 'list', 'limits': ['Rectangular', 'V Shape'], 'value': 'Rectangular'},
+            {'name': 'Length', 'type': 'float', 'value': 0, 'units':'um'},
             {'name': 'Width', 'type': 'float', 'value': 0, 'units':'um'},
-            {'name': 'Width Legs', 'type': 'float', 'value': 0, 'units':'um'}
+            {'name': 'Width Legs', 'type': 'float', 'value': 0, 'units':'um'},
+            {'name': 'nominal k', 'type': 'float', 'value': 0, 'units':'pN/nm'}
         ])
 
         self.cani_id = self.param('Canti Id')
@@ -278,21 +288,49 @@ class CantileverParams(pTypes.GroupParameter):
         
     def canti_id_changed(self):
         canti_data = canti_list.get(self.cani_id.value())
-        self.param('Canti Shape').setValue(canti_data['cantType'])
-        self.param('Lenght').setValue(canti_data['CantileverLength'])
-        self.param('Width').setValue(canti_data['CantileverWidth'])
-        self.param('Width Legs').setValue(canti_data['CantileverWidthLegs'])
+        if canti_data:
+            self.param('Canti Shape').setValue(canti_data['cantType'])
+            self.param('Length').setValue(canti_data['CantileverLength'])
+            self.param('Width').setValue(canti_data['CantileverWidth'])
+            self.param('Width Legs').setValue(canti_data['CantileverWidthLegs'])
+            self.param('nominal k').setValue(canti_data['kNominal'])
+        else:
+            print(f"Error: '{self.cani_id.value()}' not found in canti_list")
+            
+
+class tether_params(pTypes.GroupParameter):
+    def __init__(self, **opts):
+        pTypes.GroupParameter.__init__(self, **opts)
+        self.addChildren([
+            {'name': 'Tether Length', 'type': 'float', 'value': 0, 'units':'nm'},
+            {'name': 'Tether Stiffness', 'type': 'float', 'value': 0, 'units':'pN/nm'},
+            {'name': 'Tether Damping', 'type': 'float', 'value': 0, 'units':'pN·s/nm'}
+        ])      
+  
 
 
 general_params = {'name': 'General Options', 'type': 'group', 'children': [
         {'name': 'Compute All Curves', 'type': 'bool', 'value': False},
-        {'name': 'Compute All Files', 'type': 'bool', 'value': False}
+        {'name': 'Compute All Files', 'type': 'bool', 'value': False},
     ]}
 
-plot_params = {'name': 'Display Options', 'type': 'group', 'children': [
+# plot_params = {'name': 'Display Options', 'type': 'group', 'children': [
+#         {'name': 'Curve X axis', 'type': 'list', 'limits': ['zheight', 'time']},
+#         {'name': 'Curve Y axis', 'type': 'list', 'limits': ['vdeflection', 'zheight']}
+#     ]}
+
+plot_params = {
+    'name': 'Display Options',
+    'type': 'group',
+    'children': [
         {'name': 'Curve X axis', 'type': 'list', 'limits': ['zheight', 'time']},
-        {'name': 'Curve Y axis', 'type': 'list', 'limits': ['vdeflection', 'zheight']}
-    ]}
+        {'name': 'Curve Y axis', 'type': 'list', 'limits': ['vdeflection', 'zheight']},
+        {'name': 'Show App 0', 'type': 'bool', 'value': True},
+        {'name': 'Show Ret 2', 'type': 'bool', 'value': True},
+        {'name': 'Z Sensor Delay', 'type': 'float', 'value': 1e-3, 'units': 's'},
+        {'name': 'Correct Overshoot', 'type': 'bool', 'value': True},
+    ]
+}
 
 rheo_params = {'name': 'Analysis Params', 'type': 'group', 'children': [
         {'name': 'Height Channel', 'type': 'str', 'value': 'measuredHeight', 'readonly':True},
@@ -319,7 +357,7 @@ data_viewer_params = [plot_params]
 
 hertzfit_params = [general_params, AnalysisParams(mode='hertzfit', name='Analysis Params'), HertzFitParams(name='Hertz Fit Params')]
 
-#thermaltune_params = [ambient_params, CantileverParams(name='Cantilever Params'), sader_method_params]
+thermaltune_params = [ambient_params, CantileverParams(name='Cantilever Params'), sader_method_params]
 
 tingfit_params = [general_params, AnalysisParams(mode='tingfit', name='Analysis Params'), TingFitParams(name='Ting Fit Params')]
 
@@ -328,3 +366,12 @@ piezochar_params = [general_params, rheo_params]
 vdrag_params = [general_params, correction_params, rheo_params]
 
 microrheo_params = [general_params, correction_params, AnalysisParams(mode='microrheo', name='Analysis Params'), HertzFitParams(name='Hertz Fit Params')]
+
+tether_params = [general_params, AnalysisParams(mode='tether', name='Analysis Params')]    
+
+# SADER API params ################################################
+SADER_API_version = 'Python API/0.20'
+SADER_API_type = 'text/xml'
+SADER_API_url = 'https://sadermethod.org/api/1.1/api.php'
+DEFAULT_SADER_USERNAME = 'e.villz'
+DEFAULT_SADER_PASSWORD = 'g2Uf#RFH'

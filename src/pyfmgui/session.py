@@ -35,6 +35,7 @@ class Session:
         'vdrag_results': None,
         'microrheo_results': None
         }
+        self.tether_viewer_widget = None
     
     def remove_piezo_char_data(self):
         self.piezo_char_data = None
@@ -49,6 +50,7 @@ class Session:
         self.piezo_char_results = {}
         self.vdrag_results = {}
         self.microrheo_results = {}
+        self.tether_results = {}
     
     def remove_data_and_results(self):
         self.remove_results()

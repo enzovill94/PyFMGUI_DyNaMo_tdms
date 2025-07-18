@@ -22,8 +22,42 @@ from pyfmgui.widgets.thermaltune_widget import ThermalTuneWidget
 from pyfmgui.widgets.macro_widget import MacroWidget
 from pyfmgui.widgets.logger_dialog import LoggerDialog
 from pyfmgui.widgets.progress_dialog import ProgressDialog
+from pyfmgui.widgets.tetherviewer_widget import TetherViewerWidget
+
 
 class MainWindow(QtWidgets.QMainWindow):
+	"""
+	Main window of the PyFMGUI application.
+
+	This class provides the main interface for the PyFMGUI application, managing the
+	menu bar, toolbar, and MDI subwindows for various analysis and utility widgets.
+	It handles file loading (single file or folder), drag-and-drop, and window management
+	for different analysis modules such as Data Viewer, Thermal Tune, Hertz Fit, etc.
+
+	Attributes:
+		session: The application session object containing shared state and widgets.
+		mdi: The QMdiArea used for managing subwindows.
+		toolbar: The main toolbar for quick access to analysis windows.
+		thread: The QThread used for background file loading.
+		worker: The Worker object for file loading in a separate thread.
+
+	Methods:
+		init_gui(): Initializes the GUI components, menus, and toolbar.
+		add_subwindow(widget, tittle): Adds a widget as a subwindow to the MDI area.
+		open_analysis_window(): Opens or manages analysis subwindows based on user action.
+		windowaction(q): Handles menu actions for file loading, view arrangement, and clearing data.
+		getFileList(directory): Recursively finds valid data files in a directory.
+		load_files(filelist): Loads files in a background thread and updates the progress bar.
+		reportProgress(n): Updates the progress bar value.
+		oncomplete(): Handles completion of file loading.
+		signal_accept(msg): Updates progress bar value from signals.
+		signal_accept2(msg): Updates progress bar label from signals.
+		close_dialog(): Updates widgets after file loading is complete.
+		remove_all_files_and_results(): Clears all loaded data and results from widgets.
+		dragEnterEvent(event): Handles drag enter events for file/folder drops.
+		dropEvent(event): Handles drop events for file/folder drops.
+		keyPressEvent(event): Handles delete key to remove selected data entries.
+	"""
 	def __init__(self, session, parent = None):
 		super(MainWindow, self).__init__(parent)
 		self.session = session
@@ -39,7 +73,7 @@ class MainWindow(QtWidgets.QMainWindow):
 		file = bar.addMenu("File")
 		file.addAction("Load Single File")
 		file.addAction("Load Folder")
-		#file.addAction("Export Results")
+		file.addAction("Export Results")
 		file.addAction("Remove All Files And Results")
 		view = bar.addMenu("View")
 		view.addAction("Cascade")
@@ -91,6 +125,12 @@ class MainWindow(QtWidgets.QMainWindow):
 		openLoggerDialog.setToolTip("Open Logger Dialog.")
 		openLoggerDialog.triggered.connect(self.open_analysis_window)
 		
+		# Add TetherViewerWidget action for debug
+		openTetherViewer = QtGui.QAction("Tether Viewer (Debug)", self)
+		openTetherViewer.setToolTip("Open Tether Viewer debug window.")
+		openTetherViewer.triggered.connect(self.open_analysis_window)
+
+
 		self.toolbar.addAction(openDataViewer)
 		self.toolbar.addAction(openCalibrationManager)
 		self.toolbar.addAction(openHertzFit)
@@ -101,10 +141,11 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.toolbar.addAction(openExportResults)
 		self.toolbar.addAction(openMacro)
 		self.toolbar.addAction(openLoggerDialog)
+		self.toolbar.addAction(openTetherViewer)  # Add to toolbar
 
 		# Setup the logger widget
-		self.session.logger_wiget = LoggerDialog(self)
-		self.add_subwindow(self.session.logger_wiget, 'Logs')
+		self.session.logger_widget = LoggerDialog(self)
+		self.add_subwindow(self.session.logger_widget, 'Logs')
 		logger.info('Started application')
 		logger.info('No data loaded')
 
@@ -190,8 +231,16 @@ class MainWindow(QtWidgets.QMainWindow):
 				self.session.macro_widget.showMinimized()
 			else:
 				self.session.macro_widget.showMaximized()
+		elif action == "Tether Viewer (Debug)":
+			if self.session.tether_viewer_widget is None:
+				widget_to_open = TetherViewerWidget(self.session)
+			elif self.session.tether_viewer_widget.isMaximized():
+				self.session.tether_viewer_widget.showMinimized()
+			else:
+				self.session.tether_viewer_widget.showMaximized()
 		elif action == "Logs":
 			if self.session.logger_wiget is None:
+				self.add_subwindow(widget_to_open, action)
 				widget_to_open = self.session.logger_wiget
 			elif self.session.logger_wiget.isMaximized():
 				self.session.logger_wiget.showMinimized()

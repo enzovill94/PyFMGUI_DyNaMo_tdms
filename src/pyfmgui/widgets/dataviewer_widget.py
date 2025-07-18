@@ -7,6 +7,8 @@ from pyqtgraph.parametertree import Parameter, ParameterTree
 import pyfmgui.const as cts
 
 def summarize_metadata(current_file_metadata):
+
+    print("Summarizing metadata for file:", current_file_metadata.get('Entry_filename', 'Unknown'))
     return {
         'File Name': current_file_metadata.get('Entry_filename'),
         'File Type': current_file_metadata.get('file_type'),
@@ -109,6 +111,35 @@ class DataViewerWidget(QtWidgets.QWidget):
     def get_sumary_metadata():
         pass
     
+    # def make_plot(self, force_curve):
+    #     self.p1.clear()
+    #     self.p1.showGrid(x=True, y=True)
+    #     self.p1.enableAutoRange()
+    #     self.p1.addLegend((100, 30))
+    #     xkey = self.curve_x.value()
+    #     ykey = self.curve_y.value()
+    #     t0 = 0
+    #     fc_segments = force_curve.get_segments()
+    #     n_segments = len(fc_segments)
+    #     ext_data = force_curve.extend_segments[0][1]
+    #     ret_data = force_curve.retract_segments[-1][1]
+    #     t_offset = np.abs(ext_data.zheight[-1] - ret_data.zheight[0]) / (ext_data.velocity * -1e-9)
+    #     dt = np.abs(ext_data.time[1] - ext_data.time[0])
+    #     if t_offset > 2*dt:
+    #         ret_data.time = ret_data.time + t_offset
+    #     for i, (seg_id, segment) in enumerate(fc_segments):
+    #         x = getattr(segment, xkey)
+    #         x_units = 'm'
+    #         if xkey == "time":
+    #             x = x + t0
+    #             t0 = x[-1]
+    #             x_units = 's'
+    #         y = getattr(segment, ykey)
+    #         self.p1.plot(x, y, pen=(i,n_segments), name=f"{segment.segment_type} {seg_id}")
+    #     self.p1.setLabel('left', ykey, 'm')
+    #     self.p1.setLabel('bottom', xkey, x_units)
+    #     self.p1.setTitle(f"{ykey}-{xkey}")
+
     def make_plot(self, force_curve):
         self.p1.clear()
         self.p1.showGrid(x=True, y=True)
@@ -116,6 +147,11 @@ class DataViewerWidget(QtWidgets.QWidget):
         self.p1.addLegend((100, 30))
         xkey = self.curve_x.value()
         ykey = self.curve_y.value()
+        show_app0 = self.params.child('Display Options').child('Show App 0').value()
+        show_ret2 = self.params.child('Display Options').child('Show Ret 2').value()
+
+
+
         t0 = 0
         fc_segments = force_curve.get_segments()
         n_segments = len(fc_segments)
@@ -126,6 +162,13 @@ class DataViewerWidget(QtWidgets.QWidget):
         if t_offset > 2*dt:
             ret_data.time = ret_data.time + t_offset
         for i, (seg_id, segment) in enumerate(fc_segments):
+            # Only plot if selected in settings
+            if segment.segment_type == "App" and seg_id == 0 and not show_app0:
+                print('hide app0 segment')
+                continue
+            if segment.segment_type == "Ret" and seg_id == 2 and not show_ret2:
+                print ('hide ret2 segment')
+                continue
             x = getattr(segment, xkey)
             x_units = 'm'
             if xkey == "time":
@@ -139,17 +182,21 @@ class DataViewerWidget(QtWidgets.QWidget):
         self.p1.setTitle(f"{ykey}-{xkey}")
     
     def updateCurve(self):
-        idx = self.session.current_curve_index
-        height_channel = self.session.current_file.filemetadata['height_channel_key']
-        if self.session.global_involts is None:
-            deflection_sens = self.session.current_file.filemetadata['defl_sens_nmbyV'] / 1e9
-        else:
-            deflection_sens = self.session.global_involts
-        force_curve = self.session.current_file.getcurve(idx)
-        force_curve.preprocess_force_curve(deflection_sens, height_channel)
-        if self.session.current_file.filemetadata['file_type'] in cts.jpk_file_extensions:
-            force_curve.shift_height()
-        self.make_plot(force_curve)
+        if self.session.current_file is not None:
+            z_sensor_delay = self.params.child('Display Options').child('Z Sensor Delay').value()
+            bool_correct_overshoot = self.params.child('Display Options').child('Correct Overshoot').value()
+
+            idx = self.session.current_curve_index
+            height_channel = self.session.current_file.filemetadata['height_channel_key']
+            if self.session.global_involts is None:
+                deflection_sens = self.session.current_file.filemetadata['defl_sens_nmbyV'] / 1e9
+            else:
+                deflection_sens = self.session.global_involts
+            force_curve = self.session.current_file.getcurve(idx, z_sensor_delay, bool_correct_overshoot)
+            force_curve.preprocess_force_curve(deflection_sens, height_channel)
+            if self.session.current_file.filemetadata['file_type'] in cts.jpk_file_extensions:
+                force_curve.shift_height()
+            self.make_plot(force_curve)
     
     def updatePlots(self, item=None):
         if item is not None:
@@ -181,19 +228,19 @@ class DataViewerWidget(QtWidgets.QWidget):
                 shape = img.shape
                 rows, cols = shape[0], shape[1]
                 curve_coords = np.arange(cols*rows).reshape((cols, rows))
-                if self.session.current_file.filemetadata['file_type'] == "jpk-force-map":
-                    curve_coords = np.asarray([row[::(-1)**i] for i, row in enumerate(curve_coords)])
                 curve_coords = np.rot90(np.fliplr(curve_coords))
             elif self.session.current_file.filemetadata['file_type'] in cts.nanoscope_file_extensions:
                 img = self.session.current_file.piezoimg
-                img = np.rot90(np.fliplr(img))
-
                 self.plotItem.setTitle("Piezo Height (μm)")
                 shape = img.shape
                 rows, cols = shape[0], shape[1]
                 curve_coords = np.arange(cols*rows).reshape((cols, rows))
-                curve_coords = np.rot90(np.fliplr(curve_coords))
-
+            elif self.session.current_file.filemetadata['file_type'] in cts.psnex_file_extension:
+                img = self.session.current_file.piezoimg
+                self.plotItem.setTitle("Piezo Height (μm)")
+                shape = img.shape
+                rows, cols = shape[0], shape[1]
+                curve_coords = np.arange(cols*rows).reshape((cols, rows))
             self.correlogram.setImage(img * 1e6)
             colorMap = pg.colormap.get('afmhot', source='matplotlib', skipCache=True)     # choose perceptually uniform, diverging color map
 
@@ -202,7 +249,8 @@ class DataViewerWidget(QtWidgets.QWidget):
             self.bar.setLevels((img.min() * 1e6, img.max() * 1e6))
             self.plotItem.setXRange(0, cols)
             self.plotItem.setYRange(0, rows)
-
+            if self.session.current_file.filemetadata['file_type'] == "jpk-force-map":
+                curve_coords = np.asarray([row[::(-1)**i] for i, row in enumerate(curve_coords)])
             self.session.map_coords = curve_coords
             self.l.ci.layout.setColumnStretchFactor(1, 2)
 
