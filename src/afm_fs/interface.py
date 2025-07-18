@@ -65,6 +65,7 @@ class App:
         self.notebook = ttk.Notebook(self.window, style="lefttab.TNotebook")
         self.export_file_path = None # Export function, if filled then exports automatically to the first give file
         self.psnex_file = None
+        self.filetype = None
 
 
         # Get screen size
@@ -1611,7 +1612,7 @@ class App:
 
         print ('entered get_deflection_vs_piezo')
 
-        self.filetype = app.psnex_file.filemetadata['file_type']
+
 
         if self.combo_file.get() == ".tdms" and self.psnex_file == None:
             self.channel_data_deflection, self.channel_data_piezo, self.time= tdms.parse_tdms(self.path)
@@ -1622,7 +1623,8 @@ class App:
             self.dict_raw['Piezo (V)'] =self.channel_data_piezo
             self.dict_raw['Deflection (V)'] =self.channel_data_deflection
 
-        elif self.filetype == 'PSNEX.tdms':
+        elif self.combo_file.get() == ".tdms" and self.psnex_file != None:
+            self.filetype = app.psnex_file.filemetadata['file_type']
             self.deflectionChannel = app.psnex_file.filemetadata['deflection_chanel_key']
             self.zpiezoChannel = app.psnex_file.filemetadata['height_channel_key']
             self.channel_data_deflection, self.channel_data_piezo, self.time= tdms.parse_tdms(self.path, deflectionChannel=self.deflectionChannel, zpiezo=self.zpiezoChannel)

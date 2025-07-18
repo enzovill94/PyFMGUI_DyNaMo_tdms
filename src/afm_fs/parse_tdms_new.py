@@ -223,7 +223,7 @@ def GetForceDistAndParms_psnex(tdms_filepath):
     time = np.concatenate(time_list)
 
     # plt.plot(distance_nm, force_pN)
-    return distance_nm, force_pN, K, invOLS, deflection_sensitivity, piezo_gain, index_end_approach, index_start_approach, index_start_retract, index_end_retract, int(contact_pts),time
+    return -distance_nm, -force_pN, K, invOLS, deflection_sensitivity, piezo_gain, index_end_approach, index_start_approach, index_start_retract, index_end_retract, int(contact_pts),time
 
 def GetForceDistAndParms(directory, channel_data_deflection, channel_data_piezo, time):
 
@@ -539,7 +539,7 @@ def CorrectDeflectionFromRetract(deflection, distance,  Npoly, index_start_appro
         
         corrected_deflection= np.zeros(len(deflection))
         for i in range(len(deflection[index_start_retract: index_end_retract - pnt_rem])):
-            print(f'break{i}')
+            # print(f'break{i}')
             corrected_deflection[index_start_retract: index_end_retract][i]= deflection_retract[i]- p(distance[index_start_retract: index_end_retract][i] - pnt_rem)
         
         for i in range(len(deflection[index_start_approach: index_end_approach])):

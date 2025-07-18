@@ -174,11 +174,12 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
     tick_time_s = float(ps_nex_meta.get("instrument_tick_time_(us)"))* 10**-6
     z_stage_sensitivity = float(ps_nex_meta.get('system_Z_stage_piezo_sensitivity_(nm/V)'))
     segment_metadata["tick_time_s"] =float(ps_nex_meta.get("instrument_tick_time_(us)"))* 10**-6
-    segment_metadata["z_stage_sensitivity"] =float(ps_nex_meta.get('system_Z_stage_piezo_sensitivity_(nm/V)'))
+    segment_metadata["z_stage_sensitivity"] = z_stage_sensitivity #nm/V
 
     segment_metadata[f"segment_{segment_id}_type"] =ps_nex_meta.get(f"segment_{segment_id}_type")
 
-    segment_metadata[f"segment_{segment_id}_dec_factor"] = int(ps_nex_meta.get(f"segment_{segment_id}_dec_factor"))
+    decimation_factor= int(ps_nex_meta.get(f"segment_{segment_id}_dec_factor"))
+    segment_metadata[f"segment_{segment_id}_dec_factor"] = decimation_factor
     
     segment_metadata[f"segment_{segment_id}_duration_(ticks)"] = float(ps_nex_meta.get(f"segment_{segment_id}_duration_(ticks)"))
     segment_metadata[f"segment_{segment_id}_initial_deflection_(V)"] =float(ps_nex_meta.get(f"segment_{segment_id}_initial_deflection_(V)"))
@@ -191,19 +192,12 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
     segment_metadata[f"segment_{segment_id}_setpoint_(V)"] =float(ps_nex_meta.get(f"segment_{segment_id}_setpoint_(V)"))
     segment_metadata[f"segment_{segment_id}_setpoint_on_(bool)"] =bool(ps_nex_meta.get(f"segment_{segment_id}_setpoint_on_(bool)"))
     segment_metadata[f"segment_{segment_id}_setpoint_trigger_channel"] = ps_nex_meta.get(f"segment_{segment_id}_setpoint_trigger_channel")
-    segment_metadata[f"segment_{segment_id}_velocity(V/tick)"] = float(ps_nex_meta.get(f"segment_{segment_id}_velocity(V/tick)"))
+    
+    seg_vel_v_tick = float(ps_nex_meta.get(f"segment_{segment_id}_velocity(V/tick)"))
+    segment_metadata[f"segment_{segment_id}_velocity(V/tick)"] = seg_vel_v_tick
     segment_metadata[f"segment_{segment_id}_Z_position_setpoint_trigger_(V)"] = float(ps_nex_meta.get(f"segment_{segment_id}_Z_position_setpoint_trigger_(V)"))
     segment_metadata[f"segment_{segment_id}_zpiezo_control_out"] =ps_nex_meta.get(f"segment_{segment_id}_zpiezo_control_out")
-    # seg_i_pt_cal = int((segment_metadata[f"segment_{segment_id}_duration_(ticks)"]\
-                        # *segment_metadata[f'segment_{segment_id}_sampling_rate_(S/s)'] \
-                        # *tick_time_s)/segment_metadata[f'segment_{segment_id}_dec_factor'])
-    
-    # Compute the number of points in the segment
-    sizes_seg_tick = int(segment_metadata[f"segment_{segment_id}_duration_(ticks)"])
-    seg_sampling_rate = segment_metadata[f'segment_{segment_id}_sampling_rate_(S/s)']
-    dec_seg = segment_metadata[f'segment_{segment_id}_dec_factor']
-    relative_SR = (1 / seg_sampling_rate * dec_seg) / tick_time_s
-    seg_i_pt_cal = int(sizes_seg_tick/relative_SR)
+    seg_i_pt_cal = int((segment_metadata[f"segment_{segment_id}_duration_(ticks)"]*segment_metadata[f'segment_{segment_id}_sampling_rate_(S/s)']*tick_time_s)/segment_metadata[f'segment_{segment_id}_dec_factor'])
     segment_metadata[f"segment_{segment_id}_nb_points_cal"] =seg_i_pt_cal
 
     # added by Lorenzo june 10 2025
@@ -220,7 +214,18 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
     segment_metadata[f"segment_{segment_id}_Z_retract_length_(V)"] =  float(ps_nex_meta.get(f"segment_{segment_id}_Z_retract_length_(V)"))
 
     # Compute ramp speed
-    segment_metadata[f"segment_{segment_id}_ramp_speed_nm/s"] = float(ps_nex_meta.get(f'segment_{segment_id}_velocity(V/tick)'))*tick_time_s *z_stage_sensitivity
+    tick_time_z_loop = UFF.filemetadata["tick_time_z_loop"]
+    z_sens_um_v = z_stage_sensitivity *1e-03 # convert nm/V to um/V
+    vel_sens = (z_sens_um_v) / (tick_time_z_loop / decimation_factor)
+    ramp_speed_um_s = seg_vel_v_tick * vel_sens # um/s
+    # print (f'segment_{segment_id}_ramp_speed_um/s: {ramp_speed_um_s:.3g} um/s')
+    segment_metadata[f"segment_{segment_id}_ramp_speed_um/s"] = ramp_speed_um_s
+    segment_metadata[f"segment_{segment_id}_ramp_speed_nm/s"] = ramp_speed_um_s * 1e3
+    # print (f'segment_{segment_id}_ramp_speed_nm/s: {segment_metadata[f"segment_{segment_id}_ramp_speed_nm/s"]:.3g} nm/s')
+
+    # segment_metadata[f"segment_{segment_id}_ramp_speed_nm/s"] = float(ps_nex_meta.get(f'segment_{segment_id}_velocity(V/tick)'))*tick_time_s *z_stage_sensitivity
+    
     curve_properties[curve_index].update({segment_id: segment_metadata})
     
     return curve_properties
+

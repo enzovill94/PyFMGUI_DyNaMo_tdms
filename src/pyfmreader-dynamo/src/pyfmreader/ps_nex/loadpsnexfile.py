@@ -19,14 +19,8 @@ def loadPSNEXfile(filepath, UFF):
                     UFF (uff.UFF): UFF object containing the loaded metadata.
     """
     UFF.filemetadata = parsePSNEXheader(filepath)
+    UFF.filemetadata['tick_time_z_loop'] = 2e-06 # 500khz
 
-    #key for the channel of ht and defleciton
-
-    # UFF.filemetadata['found_vDeflecxtion'] = True
-    # UFF.filemetadata['height_channel_key'] = "Zpiezo_stage_sensor_(V)"
-    #UFF.filemetadata['height_channel_key'] = "Zpiezo_stage_Vout_(V)"
-
-    # UFF.filemetadata['deflection_chanel_key'] = "Deflection_quotient_(V)"
     curve_properties = {}
 
     curve_indices =  UFF.filemetadata["Entry_tot_nb_curve"] 

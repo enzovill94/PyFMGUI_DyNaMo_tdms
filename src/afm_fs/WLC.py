@@ -19,7 +19,7 @@ def WLC(extension, Lc):
     kBT = kB * T
     epsilon = 1e-12  # Small offset to avoid division by zero
 
-    x_ratio = extension / (L_c + epsilon)
+    x_ratio = extension / (Lc + epsilon)
     x_ratio = np.clip(x_ratio, 0, 0.99)  # Prevent singularity at x = L_c
 
     F = (kBT / L_p) * (1 / (4 * (1 - x_ratio)**2) - 1/4 + x_ratio)
