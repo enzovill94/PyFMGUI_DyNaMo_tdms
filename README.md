@@ -1,4 +1,17 @@
-# PyFMGUI
+# ⚠️ PYFMGUI Archived
+
+**This repository is no longer maintained.**
+
+The project is now a part of a unified repository:
+
+👉 **[PyFMlab_DyNaMo](https://github.com/DyNaMo-INSERM/PyFMlab_DyNaMo)**
+
+Please refer to the new repository for the latest updates, issues, and contributions.
+
+---
+
+*This repository is archived and will not receive any further updates.*
+
 
 ## Introduction
 PyFMGUI is an application for the analysis of force microscopy data capable of analyzing Nanoscope and JPK AFM files.
