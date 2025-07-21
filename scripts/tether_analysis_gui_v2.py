@@ -962,9 +962,9 @@ Click a folder to start analyzing TDMS files."""
             self.plateau_table.setItem(row, 4, delta_time)
             
             # Mean dy/dx (derivative) in scientific notation
-            if 'mean dy/dx' in data:
-                mean_dydx = QTableWidgetItem(f"{data['mean dy/dx']:.2e}")
-                self.plateau_table.setItem(row, 5, mean_dydx)
+            if 'mean dN/dt' in data:
+                mean_dNdt = QTableWidgetItem(f"{data['mean dN/dt']:.2e}")
+                self.plateau_table.setItem(row, 5, mean_dNdt)
             else:
                 self.plateau_table.setItem(row, 5, QTableWidgetItem("N/A"))
             
@@ -1340,7 +1340,7 @@ Click a folder to start analyzing TDMS files."""
                     'plateau_end_idx': (['plateau'], df_plat['end'].values),
                     'plateau_avg_idx': (['plateau'], df_plat['plateau_avg_idx'].values),
                     'plateau_delta_time': (['plateau'], df_plat['delta_time'].values),
-                    'plateau_mean_derivative': (['plateau'], df_plat['mean dy/dx'].values),
+                    'plateau_mean_derivative': (['plateau'], df_plat['mean dN/dt'].values),
                     'plateau_velocity_calc': (['plateau'], df_plat['velocity_calc_um_s'].values),
                 }
             else:

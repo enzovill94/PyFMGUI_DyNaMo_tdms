@@ -169,6 +169,9 @@ class DataViewerWidget(QtWidgets.QWidget):
             if segment.segment_type == "Ret" and seg_id == 2 and not show_ret2:
                 print ('hide ret2 segment')
                 continue
+            # if segment.segment_type == "Con" and seg_id == 1:
+            #     print ('hide contact segment')
+            #     continue
             x = getattr(segment, xkey)
             x_units = 'm'
             if xkey == "time":
