@@ -43,6 +43,17 @@
             "request": "launch",                           // You're launching a file, not attaching
             "program": "${workspaceFolder}/PyFMGUI_DyNaMo/src/test/test_testher_openfile.py",  // Full path to your entrypoint script
             "console": "integratedTerminal"                // Uses VS Code terminal for I/O
+        },
+        {
+            "name": "TetherViewer_GUI_V3",  // Appears in the debug dropdown
+            "type": "debugpy",                             // Correct for Python debugging
+            "request": "launch",                           // You're launching a file, not attaching
+            "program": "${workspaceFolder}/PyFMGUI_DyNaMo/scripts/tether_analysis_gui_v3_filter.py",  // Full path to your entrypoint script
+            "console": "integratedTerminal",                // Uses VS Code terminal for I/O
+            "env": {
+                "SCREEN_IDX": "2",
+                "workingDirectory": "/Users/evillz/Data/article/2025_07_01_THP1_phd/cell2/",
+            }
         }
 
     ]

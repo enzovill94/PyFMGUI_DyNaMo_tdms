@@ -125,3 +125,30 @@ class Segment:
         # Force = Kc(N/m) * deflection(m)
         self.indentation = np.array(self.zheight - self.vdeflection - center_force_x)
         self.force = np.array(self.vdeflection * spring_constant - center_force_y)
+
+
+    def denoise_segment(self, denoise_method, **kwargs):
+        """
+        Applies a denoising method to the segment's data.
+
+                Parameters:
+                        denoise_method (callable): Function to apply for denoising.
+                        **kwargs: Additional parameters for the denoise_method.
+                
+                Returns: None
+        """
+        print (f'Denoise Method: {denoise_method}')
+        # deflection_v = self.segment_formated_data["vDeflection"]
+        # self.zheight
+        # if self.segment_metadata is not None and\
+        #     self.segment_metadata["baseline_measured"]:
+        #     deflection_v = deflection_v - self.segment_metadata["baseline"]
+        # elif y0 is not None:
+        #     deflection_v = deflection_v - y0
+        # self.vdeflection = deflection_v * deflection_sens
+        # self.zheight = self.segment_formated_data[height_channel_key]
+        # if "time" in self.segment_formated_data:
+        #     self.time = self.segment_formated_data["time"]
+        # elif self.sampling_rate is not None:
+        #     segment_duration = self.nb_point * self.sampling_rate
+        #     self.time = np.linspace(0, segment_duration, self.nb_point, endpoint=False)

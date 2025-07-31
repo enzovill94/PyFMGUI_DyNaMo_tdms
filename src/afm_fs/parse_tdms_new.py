@@ -165,7 +165,7 @@ def GetForceDistAndParms_psnex(tdms_filepath):
 
     # Select curve by index
     curve_idx = 0
-    force_curve = file.getcurve(curve_idx, bool_correct_overshoot=False, z_sensor_delay=1e-3)
+    force_curve = file.getcurve(curve_idx)
 
     start_indices = filemetadata['start_indices']
     end_indices = filemetadata['end_indices']

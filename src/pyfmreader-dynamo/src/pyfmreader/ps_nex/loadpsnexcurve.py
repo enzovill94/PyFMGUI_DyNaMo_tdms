@@ -8,8 +8,8 @@ Created on Thu Apr  4 18:07:32 2024
 # File containing the loadPSNEXcurve function,
 # used to load single force curves from JPK files.
 
-from struct import unpack
-from itertools import groupby
+# from struct import unpack
+# from itertools import groupby
 import numpy as np
 from nptdms import TdmsFile
 
@@ -21,7 +21,7 @@ from ..utils.segment import Segment
 #from pyfmreader.utils.segment import Segment
 
 def loadPSNEXcurve(file_metadata,curve_index = 0, 
-                   z_sensor_delay = 1e-3, bool_correct_overshoot = True):
+                   z_sensor_delay = 0, bool_correct_overshoot = False):
     """
     Function used to load the data of a single force curve from a PSNEX file.
 
@@ -46,19 +46,19 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
 
     force_curve = ForceCurve(curve_index, file_id)
 
-    curve_indices = file_metadata["Entry_tot_nb_curve"] 
-    num_segment = file_metadata['num_segments']
+    # curve_indices = file_metadata["Entry_tot_nb_curve"] 
+    # num_segment = file_metadata['num_segments']
 
     num_segment_arr = [0,1,2]
-    index = 1 if curve_indices == 0 else 3
+    # index = 1 if curve_indices == 0 else 3
     
     tdms_groups = tdms_file_ps_nex_file.groups()  ;    tdms_psnex_fc = tdms_groups[0]
  
     deflection = tdms_psnex_fc[deflection_chanel_key][:]
     height = tdms_psnex_fc[height_channel_key][:]*z_stage_sens_m
-    seg_pos_array =[[0,0]] * len(num_segment_arr)
+    # seg_pos_array =[[0,0]] * len(num_segment_arr)
     #for the offset, and the final time array  
-    t0 = 0;time_fc =  np.array([])
+    # t0 = 0;time_fc =  np.array([])
 
     dec_seg = np.array([
     curve_properties[str(curve_index)][i][f"segment_{i}_dec_factor"]
@@ -66,9 +66,9 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
 
     print (f'decimation: {dec_seg}')
 
-    dec_factor = 1
-    if dec_seg[0] != 1:
-        dec_factor = dec_seg[0]
+    # dec_factor = 1
+    # if dec_seg[0] != 1:
+    #     dec_factor = dec_seg[0]
     # print(f"dec_factor: {dec_factor}")
     #TALK TO ENZO, remind him 
     #TODO delays in the system , a bool maybe to trigger this 
@@ -97,7 +97,7 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
     print(f"points removed : {num_pts_rm}")
 
     # sr_ticks = (1/seg_sampling_rate)/file_metadata['instrument_tick_time_(s)']
-    relative_segment_sampling_rate = (1/ seg_sampling_rate * dec_seg)
+    relative_segment_sampling_rate = ((1 / seg_sampling_rate) * dec_seg)
     relative_SR_ticks = relative_segment_sampling_rate / tick_time_s
     
     file_metadata['relative_sr'] = relative_segment_sampling_rate
@@ -130,25 +130,15 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
     start_indices = np.concatenate(([0], np.cumsum(sizes_seg[:-1])))
     end_indices = start_indices + sizes_seg
 
-    print(f'start_indices: {start_indices}')
-    print(f'end_indices: {end_indices}')
-    print(f'NumPnts: {final_nb_points}')
+
 
     file_metadata['start_indices'] = start_indices
     file_metadata['end_indices'] = end_indices
     file_metadata['numPnts'] = final_nb_points
     #Lorenzo implementation:
-    # num_pts_rm_time = num_pts_rm- (len(height) - np.sum(final_nb_points))
-
-    # start_indices = np.concatenate(([0], np.cumsum(final_nb_points[:-1])))
-    # end_indices = start_indices + final_nb_points
-
-    # if start_indices[idx] == end_indices[idx]:
-    #     print(f"Start and end indices are equal at index {idx}: {start_indices[idx]}")
-    #     end_indices[idx] = start_indices[idx] + 1
-
-
-    num_pts_con = final_nb_points[1]
+    # get segment type contact for final nb points
+    if len(num_segment_arr) >= 1:
+        num_pts_con = sizes_seg[1]
     # deflection = deflection[:-num_pts_rm]
     # height = height[num_pts_rm:]
     print(f'Deflection Length: {len(deflection)}, Height: {len(height)}')
@@ -156,11 +146,10 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
 
     # correct start and end indices to match the length of the array of
     # deflection and height array
-    if end_indices[-1] != len(deflection):
-        end_indices[-1] = len(deflection)
+    length_deflection = len(deflection)
+    if end_indices[-1] != length_deflection:
+        end_indices[-1] = length_deflection
 
-
-    
     for idx in range(len(num_segment_arr)):
 
         start_pos,end_pos = start_indices[idx],end_indices[idx]
@@ -168,7 +157,7 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
         print(start_pos,end_pos)
 
         segment_id = num_segment_arr[idx]
-        segment_raw_data = {}
+        # segment_raw_data = {}
         segment_formated_data = {}
         
         segment_type = curve_properties[str(curve_index)][segment_id][f"segment_{segment_id}_type"]
@@ -221,7 +210,10 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
                     # Start Contact
                     start_indices[idx+1] = np.nanargmax(height) + 1
                     # End Contact
-                    end_indices[idx+1] = np.nanargmax(height) + num_pts_con
+                    end_indices_last_idx = np.nanargmax(height) + num_pts_con
+
+                    if end_indices_last_idx > length_deflection:
+                        end_indices[idx+1] = end_indices_last_idx
                     end_pos = end_indices[idx]
                     segment_formated_data["time"] = np.linspace(0, segment_duration, end_pos-start_pos, endpoint=False)
                     # segment_formated_data["time"] = time_tdms[start_pos:end_pos]-time_tdms[start_pos]
@@ -244,6 +236,9 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
         elif segment.segment_type == "Modulation":
             force_curve.modulation_segments.append((int(segment.segment_id), segment))
 
+        print(f'start_indices: {start_indices}')
+        print(f'end_indices: {end_indices}')
+        print(f'NumPnts: {final_nb_points}')
         print ("---------------------")
-
+ 
     return force_curve

@@ -42,9 +42,10 @@ class UFF:
         self.imagedata=None
         self._curve_cache = None  # Cache for loaded curves to avoid reloading
     
-    def _loadcurve(self, curveidx, afmfile, file_type, z_sensor_delay = 1e-3, bool_correct_overshoot = True):
+    def _loadcurve(self, curveidx, afmfile, file_type):
         """
         Hidden function used to load a single curve from a file.
+        z_sensor_delay, bool_correct_overshoot is used to correct the overshoot in PS-NEX files.`
         
         Supported formats:
             - JPK --> .jpk-force, .jpk-force-map, .jpk-qi-data
@@ -80,16 +81,14 @@ class UFF:
             # z_sensor_delay = self.params.child('General Options').child('Z Sensor Delay').value()
             # bool_correct_overshoot = self.params.child('General Options').child('Correct Overshoot').value()
             # print (f"z_sensor_delay: {z_sensor_delay}, bool_correct_overshoot: {bool_correct_overshoot} ")
-            FC = loadPSNEXcurve(self.filemetadata,curveidx, z_sensor_delay, bool_correct_overshoot)    
-        
-
+            FC = loadPSNEXcurve(self.filemetadata, curveidx)    
         # Store the loaded curve in the cache
         self._curve_cache = FC
         print (self._curve_cache)
             
         return FC
 
-    def getcurve(self, curveidx, z_sensor_delay = 1e-3, bool_correct_overshoot = True):
+    def getcurve(self, curveidx):
         """
         Function used to load a single curve from a file.
         
@@ -122,8 +121,7 @@ class UFF:
                 # If the curve is already cached, return it
                 FC = self._curve_cache
             else:
-                FC = self._loadcurve(curveidx, None, file_type,
-                                     z_sensor_delay, bool_correct_overshoot)
+                FC = self._loadcurve(curveidx, None, file_type)
         return FC
     
     def getpiezoimg(self):

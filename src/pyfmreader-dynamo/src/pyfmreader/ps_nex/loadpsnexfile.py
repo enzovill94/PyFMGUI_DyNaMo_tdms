@@ -20,6 +20,7 @@ def loadPSNEXfile(filepath, UFF):
     """
     UFF.filemetadata = parsePSNEXheader(filepath)
     UFF.filemetadata['tick_time_z_loop'] = 2e-06 # 500khz
+    UFF.filemetadata['tick_time_z_loop_correction_factor'] = 10  # July 31 2025. Added by Lorenzo. apparently, there is a insconsistency
 
     curve_properties = {}
 

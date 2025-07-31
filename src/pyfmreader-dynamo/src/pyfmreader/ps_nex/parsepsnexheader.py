@@ -173,7 +173,8 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
     segment_metadata = {}
     tick_time_s = float(ps_nex_meta.get("instrument_tick_time_(us)"))* 10**-6
     z_stage_sensitivity = float(ps_nex_meta.get('system_Z_stage_piezo_sensitivity_(nm/V)'))
-    segment_metadata["tick_time_s"] =float(ps_nex_meta.get("instrument_tick_time_(us)"))* 10**-6
+
+    segment_metadata["tick_time_s"] =tick_time_s
     segment_metadata["z_stage_sensitivity"] = z_stage_sensitivity #nm/V
 
     segment_metadata[f"segment_{segment_id}_type"] =ps_nex_meta.get(f"segment_{segment_id}_type")
@@ -181,7 +182,8 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
     decimation_factor= int(ps_nex_meta.get(f"segment_{segment_id}_dec_factor"))
     segment_metadata[f"segment_{segment_id}_dec_factor"] = decimation_factor
     
-    segment_metadata[f"segment_{segment_id}_duration_(ticks)"] = float(ps_nex_meta.get(f"segment_{segment_id}_duration_(ticks)"))
+    seg_dur_ticks= float(ps_nex_meta.get(f"segment_{segment_id}_duration_(ticks)"))
+    segment_metadata[f"segment_{segment_id}_duration_(ticks)"]  = seg_dur_ticks
     segment_metadata[f"segment_{segment_id}_initial_deflection_(V)"] =float(ps_nex_meta.get(f"segment_{segment_id}_initial_deflection_(V)"))
     
     segment_metadata[f"segment_{segment_id}_nb"] = int(ps_nex_meta.get(f"segment_{segment_id}_nb"))
@@ -193,11 +195,16 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
     segment_metadata[f"segment_{segment_id}_setpoint_on_(bool)"] =bool(ps_nex_meta.get(f"segment_{segment_id}_setpoint_on_(bool)"))
     segment_metadata[f"segment_{segment_id}_setpoint_trigger_channel"] = ps_nex_meta.get(f"segment_{segment_id}_setpoint_trigger_channel")
     
-    seg_vel_v_tick = float(ps_nex_meta.get(f"segment_{segment_id}_velocity(V/tick)"))
+    seg_vel_v_tick = float(ps_nex_meta.get(f"segment_{segment_id}_velocity(V/tick)")) 
+    seg_sr = segment_metadata[f'segment_{segment_id}_sampling_rate_(S/s)']
+    seg_dec_factor = segment_metadata[f'segment_{segment_id}_dec_factor']
     segment_metadata[f"segment_{segment_id}_velocity(V/tick)"] = seg_vel_v_tick
     segment_metadata[f"segment_{segment_id}_Z_position_setpoint_trigger_(V)"] = float(ps_nex_meta.get(f"segment_{segment_id}_Z_position_setpoint_trigger_(V)"))
     segment_metadata[f"segment_{segment_id}_zpiezo_control_out"] =ps_nex_meta.get(f"segment_{segment_id}_zpiezo_control_out")
-    seg_i_pt_cal = int((segment_metadata[f"segment_{segment_id}_duration_(ticks)"]*segment_metadata[f'segment_{segment_id}_sampling_rate_(S/s)']*tick_time_s)/segment_metadata[f'segment_{segment_id}_dec_factor'])
+    
+    seg_i_pt_cal = int((seg_dur_ticks * seg_sr * tick_time_s)/seg_dec_factor)
+   
+    relativ_sr = seg_sr / seg_dec_factor #Hz
     segment_metadata[f"segment_{segment_id}_nb_points_cal"] =seg_i_pt_cal
 
     # added by Lorenzo june 10 2025
@@ -215,10 +222,13 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
 
     # Compute ramp speed
     tick_time_z_loop = UFF.filemetadata["tick_time_z_loop"]
+    z_loop_corrrection_factor = UFF.filemetadata.get("tick_time_z_loop_correction_factor", 10)
+
+    tick_time_z_loop /= z_loop_corrrection_factor  # Apply correction factor if available
     z_sens_um_v = z_stage_sensitivity *1e-03 # convert nm/V to um/V
-    vel_sens = (z_sens_um_v) / (tick_time_z_loop / decimation_factor)
-    ramp_speed_um_s = seg_vel_v_tick * vel_sens # um/s
-    # print (f'segment_{segment_id}_ramp_speed_um/s: {ramp_speed_um_s:.3g} um/s')
+    # vel_sens = (z_sens_um_v / tick_time_z_loop / decimation_factor)
+    ramp_speed_um_s = (seg_vel_v_tick / tick_time_z_loop) * z_sens_um_v # um/s
+    print (f'segment_{segment_id}_ramp_speed_um/s: {ramp_speed_um_s:.3g} um/s')
     segment_metadata[f"segment_{segment_id}_ramp_speed_um/s"] = ramp_speed_um_s
     segment_metadata[f"segment_{segment_id}_ramp_speed_nm/s"] = ramp_speed_um_s * 1e3
     # print (f'segment_{segment_id}_ramp_speed_nm/s: {segment_metadata[f"segment_{segment_id}_ramp_speed_nm/s"]:.3g} nm/s')

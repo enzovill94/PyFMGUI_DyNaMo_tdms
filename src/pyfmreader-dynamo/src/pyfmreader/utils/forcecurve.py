@@ -24,6 +24,7 @@ class ForceCurve:
             Methods:
                     get_segments
     """
+    
     def __init__(self, curve_index, file_id):
         self.file_id = file_id
         self.curve_index = curve_index
@@ -31,6 +32,21 @@ class ForceCurve:
         self.retract_segments = []
         self.pause_segments = []
         self.modulation_segments = []
+
+    def denoise_segments(self, denoise_method, **kwargs):
+        """
+        Applies a denoising method to all segments in the force curve.
+
+                Parameters:
+                        denoise_method (callable): Function to apply for denoising.
+                        **kwargs: Additional arguments to pass to the denoise_method.
+                
+                Returns: None
+        """
+        for _, segment in self.get_segments():
+            print (f'Segment ID: {segment}, Denoise Method: {denoise_method}')
+            segment.denoise_segment(denoise_method, **kwargs)   
+
 
     def get_segments(self):
         """
@@ -44,7 +60,7 @@ class ForceCurve:
             *self.extend_segments, *self.pause_segments, *self.modulation_segments, *self.retract_segments
         ]
         return sorted(force_curve_segments, key=lambda x: int(x[0]))
-    
+
     def preprocess_force_curve(self, deflection_sens, height_channel_key, y0=None):
         """
         Computes Vertical Deflection in m and populates the vdeflection, zheight 
@@ -64,7 +80,7 @@ class ForceCurve:
         """
         for _, segment in self.get_segments():
             segment.preprocess_segment(deflection_sens, height_channel_key, y0)
-    
+
     def shift_height(self):
         """
         Shifts the values of zheight using the last zheight value of the last retract segment.
@@ -99,3 +115,4 @@ class ForceCurve:
         """
         for _, segment in self.get_segments():
             segment.get_force_vs_indentation(poc, spring_constant)
+
