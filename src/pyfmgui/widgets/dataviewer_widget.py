@@ -148,7 +148,8 @@ class DataViewerWidget(QtWidgets.QWidget):
         xkey = self.curve_x.value()
         ykey = self.curve_y.value()
         show_app0 = self.params.child('Display Options').child('Show App 0').value()
-        show_ret2 = self.params.child('Display Options').child('Show Ret 2').value()
+        show_ret = self.params.child('Display Options').child('Show Ret 2').value()
+        show_con = self.params.child('Display Options').child('Show Con 1').value()
 
 
 
@@ -166,12 +167,12 @@ class DataViewerWidget(QtWidgets.QWidget):
             if segment.segment_type == "App" and seg_id == 0 and not show_app0:
                 print('hide app0 segment')
                 continue
-            if segment.segment_type == "Ret" and seg_id == 2 and not show_ret2:
+            if segment.segment_type == "Ret" and seg_id == 2 and not show_ret:
                 print ('hide ret2 segment')
                 continue
-            # if segment.segment_type == "Con" and seg_id == 1:
-            #     print ('hide contact segment')
-            #     continue
+            if segment.segment_type == "Con" and seg_id == 1 and not show_con:
+                print ('hide contact segment')
+                continue
             x = getattr(segment, xkey)
             x_units = 'm'
             if xkey == "time":
@@ -186,8 +187,8 @@ class DataViewerWidget(QtWidgets.QWidget):
     
     def updateCurve(self):
         if self.session.current_file is not None:
-            z_sensor_delay = self.params.child('Display Options').child('Z Sensor Delay').value()
-            bool_correct_overshoot = self.params.child('Display Options').child('Correct Overshoot').value()
+            # z_sensor_delay = self.params.child('Display Options').child('Z Sensor Delay').value()
+            # bool_correct_overshoot = self.params.child('Display Options').child('Correct Overshoot').value()
 
             idx = self.session.current_curve_index
             height_channel = self.session.current_file.filemetadata['height_channel_key']
@@ -195,7 +196,7 @@ class DataViewerWidget(QtWidgets.QWidget):
                 deflection_sens = self.session.current_file.filemetadata['defl_sens_nmbyV'] / 1e9
             else:
                 deflection_sens = self.session.global_involts
-            force_curve = self.session.current_file.getcurve(idx, z_sensor_delay, bool_correct_overshoot)
+            force_curve = self.session.current_file.getcurve(idx)
             force_curve.preprocess_force_curve(deflection_sens, height_channel)
             if self.session.current_file.filemetadata['file_type'] in cts.jpk_file_extensions:
                 force_curve.shift_height()

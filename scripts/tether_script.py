@@ -258,8 +258,11 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     default_params = {
         'sav_window_length': 10,
         'sav_polyorder': 1,
-        'pl_threshold': 150e-9,
+        
+        'pl_threshold': 0.01,
         'pl_min_width': 2,
+        'pl_min_width_um': 2,
+
         'last_num_plateaus': 7,
         'last_plateau_avg_percentage': 15,  # New parameter: percentage of last plateau to average
     }
@@ -273,22 +276,37 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     dt_arr = np.arange(len(y)) * dt
 
     # calculate dx of displacement
-    dx =np.abs(x[-1] - x[-2])
-    if dx == 0:
+    dx =np.abs(x[0] - x[1])
+    if dx == 0: 
         #shift to the left 
-        dx = np(x[-2] - x[-3])
+        dx = np.abs(x[-2] - x[-3])
+
+    print(f'Pl_threshold: {final_params["pl_threshold"]:.2e} N')
+    print(f'total distance: {dx * len(y):.2e} m, dx: {dx:.2e} m')
     
     # Calculate velocity from displacement vs time
-    velocity = calculate_velocity(x, dt_arr)
-
+    velocity_um_s = -(calculate_velocity(x, dt_arr))
+    print (f'velocity: {velocity_um_s:.4e} m/s, dt: {dt:.4e} sec')
+    
     # Calculate derivative of deflection with respect to time
-    dy = np.gradient(y, dt)
-    dy_abs = np.abs(dy)
+    dy = np.gradient(y, dt_arr * velocity_um_s)
+    dy_smooth = np.abs(dy)
     dy_abs_sav = savitzky_golay_smooth(
-        dy_abs,
+        dy_smooth,
         window_length=final_params['sav_window_length'], 
         polyorder=final_params['sav_polyorder']
     )
+
+    # Convert pl_min_width_um to number of points
+    # sampling_rate = 1 / dt  # Hz
+    velocity_m_s = velocity_um_s * 1e-06  # Convert µm/s to m/s
+    distance_per_point = velocity_m_s * dt  # meters per data point
+    pl_min_width_points = int(final_params['pl_min_width_um'] * 1e-6 / distance_per_point)
+    # Print the actual physical distance covered by the minimum plateau width (in µm)
+    actual_distance_um = pl_min_width_points * distance_per_point * 1e6 
+    print(f'pl_min_width_points: {pl_min_width_points} points, distance = {actual_distance_um:.2f} µm')
+    # final_params['pl_min_width'] = pl_min_width_points
+
 
     # Find flat plateaus
     is_flat = dy_abs_sav < final_params['pl_threshold']
@@ -299,15 +317,20 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         if flat and start is None:
             start = i
         elif not flat and start is not None:
-            if i - start >= final_params['pl_min_width']:
+            if i - start >= pl_min_width_points:
                 plateaus.append((start, i))
             start = None
     
-    if start is not None and len(y) - start >= final_params['pl_min_width']:
+    if start is not None and len(y) - start >= pl_min_width_points:
         plateaus.append((start, len(y)))
     
     # Keep only the last N plateaus
-    plateaus = plateaus[-final_params['last_num_plateaus']:]
+    if final_params['last_num_plateaus'] == -1:
+        # plot all plateaus
+        plateaus = plateaus[:]
+    else:
+        # plot only the last N plateaus
+        plateaus = plateaus[-final_params['last_num_plateaus']:]
     
     # Calculate plateau statistics
     plateau_avg_idx_arr = []
@@ -353,8 +376,11 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     # calculate slope of plateau
     plateau_slopes = []
     for start, end in plateaus:
-        if end - start > 1:
-            slope, _, _, _, _ = linregress(x[start:end], y[start:end])
+        x_slice = x[start:end]
+        y_slice = y[start:end]
+        if end - start > 1 and len(np.unique(x_slice)) > 1:
+            # check if there are only two points, that they are not the same, if so, 
+            slope, _, _, _, _ = linregress(x_slice, y_slice)
             plateau_slopes.append(slope)
         else:
             plateau_slopes.append(np.nan)
@@ -379,6 +405,7 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         'plateau_slope': plateau_slopes,
         'tether_lifetime_m':[plateau_avg_idx * dx for plateau_avg_idx in plateau_avg_idx_arr],
         'tether_lifetime_s': [(end - start) * dt for start, end in plateaus],
+        'average_velocity': velocity_um_s,
     })
 
     # Create dataframe of data for plotting
@@ -388,10 +415,10 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         # 'dy_smooth': dy_smooth,
         'dy_abs_sav': dy_abs_sav,
         # 'is_flat': is_flat,
-        'dt': dt,
+        'dt': dt_arr,
     }
     
-    return plateaus, df_plat, df_data, velocity
+    return plateaus, df_plat, df_data, velocity_um_s
 
 def process_single_file(filename, params=None, save_plots=False, output_dir=None):
     """
@@ -421,9 +448,9 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
     defl_sens = file_deflection_sensitivity / 1e9  # m/V
     
     # Get force curve with parameters from GUI
-    z_sensor_delay = params.get('z_sensor_delay', 0.001)
-    bool_correct_overshoot = params.get('bool_correct_overshoot', True)
-    force_curve = file.getcurve(0, bool_correct_overshoot=bool_correct_overshoot, z_sensor_delay=z_sensor_delay)
+    # z_sensor_delay = params.get('z_sensor_delay', 0.001)
+    # bool_correct_overshoot = params.get('bool_correct_overshoot', True)
+    force_curve = file.getcurve(0)
     force_curve.preprocess_force_curve(defl_sens, height_channel_key)
     
     # Get segments
@@ -439,20 +466,23 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
             ret_piezo = -segment.zheight
             ret_deflection = -segment.vdeflection * K
             relative_SR_ret = relative_SR[segid]
-            vel_ret_um_s = segment.velocity * 1e-03  # Convert to um/s
+            vel_ret_um_s = segment.velocity * 1e-03  # Convert from nm to um/s
+            time_ret = np.arange(len(ret_piezo)) * relative_SR_ret 
     
     # Tilt correction
     max_offset = params.get('max_offset', 100)  # %
     min_offset = params.get('min_offset', 70)   # %
     max_offset, min_offset = update_tilt_range(ret_piezo, max_offset, min_offset, offset_type='percentage')
     tilt_ret_deflection_N = correct_tilt(ret_piezo, ret_deflection, max_offset, min_offset)
+
+    # ADD Filter processing here
     
     # Find contact point
     index_first_positive = find_first_positive(tilt_ret_deflection_N)
     first_positive_displacement = ret_piezo[index_first_positive]
     ret_corrected_displacement = ret_piezo - first_positive_displacement
     
-    # Apply Savitzky-Golay smoothing
+    # Apply Savitzky-Golay smoothing in force curve
     savitz_defl = savitzky_golay_smooth(tilt_ret_deflection_N, window_length=5, polyorder=1)
     
     # Extract data after contact point
@@ -461,7 +491,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
     rel_time = np.arange(len(displacement)) * relative_SR_ret
     
     # Find plateaus
-    plateaus, df_plat, _, velocity_calc_um_s = find_plateaus(displacement, defl_savitz, params, dt=relative_SR_ret)
+    plateaus, df_plat, df_data, velocity_calc_um_s = find_plateaus(displacement, defl_savitz, params, dt=relative_SR_ret)
     
     # Save PNG plot if requested and plateaus were found
     png_path = None
@@ -474,7 +504,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
         # Generate PNG plot
         try:
             png_result = create_plateau_png(
-                rel_time=rel_time,
+                rel_time=time_ret,
                 defl_savitz=defl_savitz,
                 plateaus=plateaus,
                 df_plat=df_plat,
@@ -505,6 +535,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
         'png_path': png_path,
         'velocity_metadata': -vel_ret_um_s,
         'velocity_calc_um_s': velocity_calc_um_s,
+        'df_data': df_data,
     }
     
     print(f"  Found {len(plateaus)} plateaus")
@@ -640,6 +671,60 @@ def batch_process_files(directory, file_indices=None, params=None, save_results=
             print(f"Summary results saved to: {summary_file}")
     
     return all_results
+
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.fft import fft, ifft, fftfreq
+from scipy.signal import detrend
+
+def suppress_fourier_band(signal, sampling_rate, velocity, w_range, remove=0, interp=True):
+    signal_trimmed = signal[remove:]
+    N = len(signal_trimmed)
+    T = velocity / sampling_rate  # µm/sample
+
+    yf = fft(signal_trimmed)
+    xf = fftfreq(N, T)
+
+    xf_half = xf[:N//2]
+    yf_half = yf[:N//2]
+
+    # Get mask only for positive frequencies
+    mask = (xf_half >= w_range[0]) & (xf_half <= w_range[1])
+    xf_masked = xf_half[mask]
+    yf_masked = yf_half[mask]
+
+    if len(xf_masked) == 0:
+        return signal.copy()  # Skip if no points in range
+    
+    yf_interp = yf.copy()
+    if interp:
+        # Interpolate suppressed region
+        interp_vals = np.interp(xf_masked, [xf_masked[0], xf_masked[-1]],
+                                [yf_masked[0], yf_masked[-1]])
+
+        # Rebuild full FFT with interpolated suppression
+        yf_interp = yf.copy()
+        yf_interp[:N//2][mask] = interp_vals
+        yf_interp[-(N//2):][::-1][mask] = np.conj(interp_vals)  # maintain Hermitian symmetry
+    else:
+        # Zero out the frequencies in the specified range
+        yf_interp[:N//2][mask] = 0
+        yf_interp[-(N//2):][::-1][mask] = 0
+
+    signal_filtered = np.real(ifft(yf_interp))
+    full_output = signal.copy()
+    full_output[remove:] = signal_filtered
+    return full_output
+
+# --- Butterworth Band-Stop Filter ---
+def butterworth_bandstop(xf, f_low, f_high, order=5):
+    f_center = (f_low + f_high) / 2
+    bandwidth = f_high - f_low
+    eps = 1e-12
+    return 1 / (1 + ((xf * bandwidth) / ((xf**2 - f_center**2) + eps))**(2 * order))
+
 
 
 if __name__ == "__main__":
