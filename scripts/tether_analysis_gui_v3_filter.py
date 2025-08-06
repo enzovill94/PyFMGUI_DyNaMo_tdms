@@ -701,6 +701,18 @@ Ready to analyze TDMS files efficiently!"""
         self.file_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.file_table.setEditTriggers(QTableWidget.NoEditTriggers)
         
+        # Set custom selection colors (darker blue)
+        self.file_table.setStyleSheet("""
+            QTableWidget::item:selected {
+                background-color: #1e3a8a;  /* Dark blue */
+                color: white;
+            }
+            QTableWidget::item:selected:focus {
+                background-color: #1e40af;  /* Slightly lighter dark blue when focused */
+                color: white;
+            }
+        """)
+        
         # Adjust column widths
         header = self.file_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)  # Filename stretches
@@ -722,7 +734,7 @@ Ready to analyze TDMS files efficiently!"""
             # Update current selection to maintain the same file
             if hasattr(self, 'index') and 0 <= self.index < len(self.file_path):
                 current_row = self.get_table_row_from_file_index(self.index)
-                self.file_table.selectRow(current_row)
+                self.select_row_preserve_scroll(current_row)
             
             self.status_label.setText("Table restored to original discovery order (double-click filename column to unsort)")
     
@@ -752,6 +764,27 @@ Ready to analyze TDMS files efficiently!"""
         except Exception as e:
             print(f"Warning: Could not get table row from file index {file_index}: {e}")
             return file_index
+    
+    def select_row_preserve_scroll(self, row):
+        """Select a row while preserving horizontal scroll position"""
+        if row < 0 or row >= self.file_table.rowCount():
+            return
+            
+        # Store current horizontal scroll position
+        horizontal_scrollbar = self.file_table.horizontalScrollBar()
+        current_horizontal_pos = horizontal_scrollbar.value()
+        
+        # Select the row (this will trigger scrolling)
+        self.file_table.selectRow(row)
+        
+        # Scroll to make the row visible vertically, but preserve horizontal position
+        self.file_table.scrollTo(
+            self.file_table.model().index(row, 0),  # Ensure row is visible
+            QTableWidget.PositionAtCenter  # Center the row vertically
+        )
+        
+        # Restore horizontal scroll position
+        horizontal_scrollbar.setValue(current_horizontal_pos)
     
     def extract_date_from_filename(self, filename):
         """Extract date taken from filename timestamp if available"""
@@ -1000,7 +1033,7 @@ Ready to analyze TDMS files efficiently!"""
             
             # Find the table row for this file index and select it
             table_row = self.get_table_row_from_file_index(self.index)
-            self.file_table.selectRow(table_row)
+            self.select_row_preserve_scroll(table_row)
             # Clear previous analysis result
             self.current_analysis_result = None
             
@@ -1025,7 +1058,7 @@ Ready to analyze TDMS files efficiently!"""
             
             # Find the table row for this file index and select it
             table_row = self.get_table_row_from_file_index(self.index)
-            self.file_table.selectRow(table_row)
+            self.select_row_preserve_scroll(table_row)
             # Clear previous analysis result
             self.current_analysis_result = None
             
@@ -2491,7 +2524,7 @@ Ready to analyze TDMS files efficiently!"""
             
             # Select the correct table row for the current file index
             table_row = self.get_table_row_from_file_index(self.index)
-            self.file_table.selectRow(table_row)
+            self.select_row_preserve_scroll(table_row)
             
             # Load parameters for the current file
             self.load_parameters_for_current_file()
@@ -2850,7 +2883,7 @@ All file-specific parameters have been preserved."""
             # Restore original index and load its results
             self.index = original_index
             table_row = self.get_table_row_from_file_index(self.index)
-            self.file_table.selectRow(table_row)
+            self.select_row_preserve_scroll(table_row)
             self.load_parameters_for_current_file()
             
             # Update display for the current file if we have results
@@ -2929,7 +2962,7 @@ All file-specific parameters have been preserved."""
             # Restore original index on error
             self.index = original_index
             table_row = self.get_table_row_from_file_index(self.index)
-            self.file_table.selectRow(table_row)
+            self.select_row_preserve_scroll(table_row)
 
     def load_compound_sessions(self):
         """Load and add multiple session files to the current session"""
@@ -3139,7 +3172,9 @@ All file-specific parameters have been preserved."""
             else:
                 self.index = 0
                 
-            self.file_table.selectRow(self.index)
+            # Get the correct table row for the current file index
+            table_row = self.get_table_row_from_file_index(self.index)
+            self.select_row_preserve_scroll(table_row)
             
             # Load parameters for the current file
             self.load_parameters_for_current_file()
