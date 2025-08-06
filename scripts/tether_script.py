@@ -314,12 +314,30 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     print(f'pl_min_width_points: {pl_min_width_points} points, distance = {actual_distance_um:.2f} µm')
     # final_params['pl_min_width'] = pl_min_width_points
 
+    # calculate index for params['plateau_end_remove_percent']
+    pl_end_remove_points = int(len(y) * final_params.get('plateau_end_remove_percent', 0) / 100.0)
 
-    # Find flat plateaus
-    is_flat = dy_abs_sav < final_params['pl_threshold']
+    # Truncate data arrays ONLY for plateau detection
+    if pl_end_remove_points == 0:
+        # Don't remove anything - use entire arrays for plateau detection
+        y_analysis = y
+        x_analysis = x
+        dy_abs_sav_analysis = dy_abs_sav
+        print(f'Using full arrays for plateau detection. Length: {len(y_analysis)}')
+    else:
+        # Remove the specified percentage from the end for plateau detection ONLY
+        end_idx = len(y) - pl_end_remove_points
+        y_analysis = y[:end_idx]
+        x_analysis = x[:end_idx]
+        dy_abs_sav_analysis = dy_abs_sav[:end_idx]
+        print(f'Removing {pl_end_remove_points} points ({final_params.get("plateau_end_remove_percent", 0)}%) from end for plateau detection. Analysis length: {len(y_analysis)}/{len(y)}')
+
+    # Find flat plateaus using truncated data
+    is_flat = dy_abs_sav_analysis < final_params['pl_threshold']
+    
     plateaus = []
     start = None
-    
+
     for i, flat in enumerate(is_flat):
         if flat and start is None:
             start = i
@@ -328,8 +346,9 @@ def find_plateaus(x, y, params=None, dt=1e-3):
                 plateaus.append((start, i))
             start = None
     
-    if start is not None and len(y) - start >= pl_min_width_points:
-        plateaus.append((start, len(y)))
+    # Check for plateau at the end (use length of analysis arrays, not original)
+    if start is not None and len(y_analysis) - start >= pl_min_width_points:
+        plateaus.append((start, len(y_analysis)))
     
     print(f'Raw plateaus found: {len(plateaus)}')
     
@@ -357,21 +376,21 @@ def find_plateaus(x, y, params=None, dt=1e-3):
             
             # Take the first X% of the last plateau
             avg_end = start + avg_length
-            plateau_avg = np.mean(y[start:avg_end])
-            plateau_avg_idx = start + np.argmin(np.abs(y[start:avg_end] - plateau_avg))
+            plateau_avg = np.mean(y_analysis[start:avg_end])
+            plateau_avg_idx = start + np.argmin(np.abs(y_analysis[start:avg_end] - plateau_avg))
             
             # Use start - 1 for the index array (maintaining existing behavior)
             plateau_avg_idx_arr.append(start - 1)
         else:
             # For all other plateaus, use the full plateau for averaging
-            plateau_avg = np.mean(y[start:end])
-            plateau_avg_idx = start + np.argmin(np.abs(y[start:end] - plateau_avg))
+            plateau_avg = np.mean(y_analysis[start:end])
+            plateau_avg_idx = start + np.argmin(np.abs(y_analysis[start:end] - plateau_avg))
             plateau_avg_idx_arr.append(plateau_avg_idx)
         
         # Calculate delta differences from the perspective of going backwards
         if i < len(plateaus) - 1:
-            current_avg = np.mean(y[start:end])
-            next_avg = np.mean(y[plateaus[i+1][0]:plateaus[i+1][1]])
+            current_avg = np.mean(y_analysis[start:end])
+            next_avg = np.mean(y_analysis[plateaus[i+1][0]:plateaus[i+1][1]])
             delta = next_avg - current_avg  # Difference to next plateau
             plateau_delta_avg_arr.append(delta)
         else:
@@ -381,14 +400,14 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     # Calculate plateau derivatives
     plateau_derivatives = []
     for start, end in plateaus:
-        plateau_derivative = np.mean(np.abs(dy[start:end]))
+        plateau_derivative = np.mean(np.abs(dy_abs_sav_analysis[start:end]))
         plateau_derivatives.append(plateau_derivative)
 
     # calculate slope of plateau
     plateau_slopes = []
     for start, end in plateaus:
-        x_slice = x[start:end]
-        y_slice = y[start:end]
+        x_slice = x_analysis[start:end]
+        y_slice = y_analysis[start:end]
         if end - start > 1 and len(np.unique(x_slice)) > 1:
             # check if there are only two points, that they are not the same, if so, 
             slope, _, _, _, _ = linregress(x_slice, y_slice)

@@ -66,16 +66,17 @@ class ParameterTreeWidget(QWidget):
                 'children': [
                     {'name': 'Plateau Threshold (nN)', 'type': 'float', 'value': 1.0, 'limits': (1e-3, 1e6), 'step': 0.001, 'key': 'pl_threshold'},
                     {'name': 'Min Plateau Width (μm)', 'type': 'float', 'value': 1.0, 'limits': (1e-4, 60), 'step': 0.001, 'key': 'pl_min_width_um'},
-                    {'name': 'Max Plateaus', 'type': 'int', 'value': 7, 'limits': (1, 15), 'step': 1, 'key': 'last_num_plateaus'},
+                    {'name': 'Max Plateaus', 'type': 'int', 'value': 7, 'limits': (-1, 30), 'step': 1, 'key': 'last_num_plateaus'},
                     {'name': 'Last Plateau Avg (%)', 'type': 'int', 'value': 15, 'limits': (1, 100), 'step': 1, 'key': 'last_plateau_avg_percentage'},
+                    {'name': '% End Remove', 'type': 'int', 'value': 0, 'limits': (0, 80), 'step': 1, 'key': 'plateau_end_remove_percent'},
                 ]
             },
             {
                 'name': 'Baseline Correction',
                 'type': 'group',
                 'children': [
-                    {'name': 'Max Tilt Offset (%)', 'type': 'int', 'value': 100, 'limits': (50, 100), 'step': 5, 'key': 'max_offset'},
-                    {'name': 'Min Tilt Offset (%)', 'type': 'int', 'value': 70, 'limits': (30, 90), 'step': 5, 'key': 'min_offset'},
+                    {'name': 'Max Tilt Offset (%)', 'type': 'int', 'value': 100, 'limits': (30, 100), 'step': 5, 'key': 'max_offset'},
+                    {'name': 'Min Tilt Offset (%)', 'type': 'int', 'value': 70, 'limits': (20, 90), 'step': 5, 'key': 'min_offset'},
                 ]
             },
             {

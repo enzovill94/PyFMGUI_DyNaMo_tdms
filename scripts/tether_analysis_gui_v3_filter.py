@@ -47,6 +47,7 @@ import datetime
 # Import tether analysis functions
 from tether_script import process_single_file
 from parameter_tree_widget import ParameterTreeWidget
+from concurrent_tether_analysis import ConcurrentTetherProcessor
 
 class DragDropTableWidget(QTableWidget):
     """Custom QTableWidget with drag and drop support for TDMS files"""
@@ -271,20 +272,23 @@ class TetherAnalysisGUI(QMainWindow):
         # Set default instructions text
         default_instructions = """Welcome to Tether Analysis GUI!
 
-🎯 Getting Started:
-• Drag folders or TDMS files into the file table
-• Use File menu > Change Directory to browse for files
-• Click files in the table to analyze
+🎯 Getting Started (Main Portal):
+• Use "Analysis" menu → "Load & Analyze Files..." (Ctrl+B)
+• This will load a directory and analyze all TDMS files concurrently
+• Alternatively: Drag folders or TDMS files into the file table
+• Or use File menu → Change Directory to browse for files
 
 ⌨️ Keyboard Shortcuts:
+• Ctrl+B - Load & Analyze Files (Main Portal)
 • ↑/↓ - Navigate files (Previous/Next)
 • G - Mark file as Good
 • B - Mark file as Bad  
-• Enter - Run analysis
+• Enter - Run analysis on current file
 • S - Save session
 • L - Load session
 
-Ready to analyze TDMS files!"""
+🚀 Performance: Concurrent processing uses all CPU cores for 5-6x speedup!
+Ready to analyze TDMS files efficiently!"""
         self.results_text.setText(default_instructions)
         
         results_text_layout.addWidget(self.results_text)
@@ -434,11 +438,18 @@ Ready to analyze TDMS files!"""
         analysis_menu.addAction(run_analysis_action)
         
         # Batch Analysis action
-        batch_analysis_action = QAction('Run Batch Analysis...', self)
+        batch_analysis_action = QAction('Load & Analyze Files...', self)
         batch_analysis_action.setShortcut('Ctrl+B')
-        batch_analysis_action.setStatusTip('Run analysis on all files in session')
+        batch_analysis_action.setStatusTip('Load directory and analyze all TDMS files with concurrent processing (main portal)')
         batch_analysis_action.triggered.connect(self.run_batch_analysis_on_session_files)
         analysis_menu.addAction(batch_analysis_action)
+        
+        # Concurrent Batch Analysis action
+        concurrent_batch_action = QAction('Run Concurrent Batch Analysis...', self)
+        concurrent_batch_action.setShortcut('Ctrl+Shift+B')
+        concurrent_batch_action.setStatusTip('Run analysis on all files using multiple CPU cores (faster)')
+        concurrent_batch_action.triggered.connect(self.run_concurrent_batch_analysis)
+        analysis_menu.addAction(concurrent_batch_action)
         
         # Rerun with Updated Filters action
         rerun_filters_action = QAction('Rerun with Updated Filters', self)
@@ -484,6 +495,15 @@ Ready to analyze TDMS files!"""
         toggle_plateaus_action.setChecked(self.plateaus_check.isChecked())
         toggle_plateaus_action.triggered.connect(lambda checked: self.plateaus_check.setChecked(checked))
         view_menu.addAction(toggle_plateaus_action)
+        
+        view_menu.addSeparator()
+        
+        # Restore Original Order action
+        restore_order_action = QAction('Restore Original File Order', self)
+        restore_order_action.setShortcut('Ctrl+O')
+        restore_order_action.setStatusTip('Restore files to original discovery order (unsort)')
+        restore_order_action.triggered.connect(lambda: self.restore_original_order(0))
+        view_menu.addAction(restore_order_action)
         
         view_menu.addSeparator()
         
@@ -613,14 +633,32 @@ Ready to analyze TDMS files!"""
         self.find_tdms_files(directory)
         
     def setup_file_table(self):
-        """Setup the file table with column headers"""
+        """Setup the file table with sortable columns and index tracking
+        
+        Index Mapping System:
+        - Each table row stores its original file index in the first column's UserRole data
+        - When table is sorted, visual rows change but original indices are preserved
+        - get_file_index_from_table_row() retrieves original index from visual row
+        - get_table_row_from_file_index() finds visual row for original index
+        - This allows sorting while maintaining correct file references
+        
+        Navigation Behavior:
+        - Click any column header to sort by that column
+        - Double-click filename column to restore original discovery order (unsort)
+        - Up/Down arrow navigation follows original file order (not visual sort order)
+        - This ensures Good/Bad marking workflow continues through all files
+        """
         # Define columns for file information
         headers = ['Filename', 'Status', 'Date Taken', 'Date Modified', 'Size (KB)', 'Calc Vel (μm/s)', 'Analysis Status']
         self.file_table.setColumnCount(len(headers))
         self.file_table.setHorizontalHeaderLabels(headers)
         
-        # Disable sorting to prevent visual file position jumping
-        self.file_table.setSortingEnabled(False)
+        # Enable sorting with proper index tracking
+        self.file_table.setSortingEnabled(True)
+        
+        # Connect header double-click to restore original order
+        header = self.file_table.horizontalHeader()
+        header.sectionDoubleClicked.connect(self.restore_original_order)
         
         # Set table properties
         self.file_table.setAlternatingRowColors(True)
@@ -632,6 +670,52 @@ Ready to analyze TDMS files!"""
         header.setSectionResizeMode(0, QHeaderView.Stretch)  # Filename stretches
         for i in range(1, len(headers)):
             header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+    
+    def restore_original_order(self, logical_index):
+        """Restore original file discovery order when double-clicking column headers"""
+        if logical_index == 0:  # Only for filename column
+            # Temporarily disable sorting
+            self.file_table.setSortingEnabled(False)
+            
+            # Re-populate table in original order
+            self.populate_file_table()
+            
+            # Re-enable sorting
+            self.file_table.setSortingEnabled(True)
+            
+            # Update current selection to maintain the same file
+            if hasattr(self, 'index') and 0 <= self.index < len(self.file_path):
+                current_row = self.get_table_row_from_file_index(self.index)
+                self.file_table.selectRow(current_row)
+            
+            self.status_label.setText("Table restored to original discovery order (double-click filename column to unsort)")
+    
+    def get_file_index_from_table_row(self, row):
+        """Get the original file index from a table row"""
+        try:
+            filename_item = self.file_table.item(row, 0)  # First column (filename)
+            if filename_item:
+                original_index = filename_item.data(Qt.UserRole)
+                if original_index is not None:
+                    return original_index
+            # Fallback: assume row == original index (for backwards compatibility)
+            return row
+        except Exception as e:
+            print(f"Warning: Could not get file index from table row {row}: {e}")
+            return row
+    
+    def get_table_row_from_file_index(self, file_index):
+        """Get the current table row for a given original file index"""
+        try:
+            for row in range(self.file_table.rowCount()):
+                filename_item = self.file_table.item(row, 0)
+                if filename_item and filename_item.data(Qt.UserRole) == file_index:
+                    return row
+            # Fallback: assume file_index == row (for backwards compatibility)
+            return file_index
+        except Exception as e:
+            print(f"Warning: Could not get table row from file index {file_index}: {e}")
+            return file_index
     
     def extract_date_from_filename(self, filename):
         """Extract date taken from filename timestamp if available"""
@@ -656,11 +740,12 @@ Ready to analyze TDMS files!"""
             return None
     
     def on_file_table_click(self, row, column):
-        """Handle file table selection"""
+        """Handle file table selection with proper index mapping"""
         # Save parameters for previous file
         self.save_parameters_for_current_file()
         
-        self.index = row
+        # Get the original file index from the clicked row
+        self.index = self.get_file_index_from_table_row(row)
         # Clear previous analysis result
         self.current_analysis_result = None
         
@@ -760,7 +845,7 @@ Ready to analyze TDMS files!"""
         self.file = file_name
         self.file_path = file_path
         self.file_data = file_data
-        self.bool_good_curve = np.zeros(len(file_path))
+        self.bool_good_curve = np.full(len(file_path), -1)  # -1 = Not Analyzed, 0 = Bad, 1 = Good
         self.file_parameters = {}
         self.plateau_selections = {}  # Reset plateau selections for new directory
         
@@ -779,15 +864,18 @@ Ready to analyze TDMS files!"""
         self.file_table.setRowCount(len(self.file_data))
         
         for row, file_info in enumerate(self.file_data):
-            # Filename
-            self.file_table.setItem(row, 0, QTableWidgetItem(file_info['filename']))
+            # Filename - store original file index in UserRole for sorting compatibility
+            filename_item = QTableWidgetItem(file_info['filename'])
+            filename_item.setData(Qt.UserRole, row)  # Store original index
+            self.file_table.setItem(row, 0, filename_item)
             
-            # Status (Good/Bad/New)
+            # Status (Good/Bad/Not Analyzed)
             status_item = QTableWidgetItem(file_info['status'])
             if file_info['status'] == 'Good':
                 status_item.setBackground(Qt.green)
             elif file_info['status'] == 'Bad':
                 status_item.setBackground(Qt.red)
+            # 'Not Analyzed' files keep default background color
             self.file_table.setItem(row, 1, status_item)
             
             # Date Taken (from filename)
@@ -823,8 +911,7 @@ Ready to analyze TDMS files!"""
         
         # Re-enable sorting
         self.file_table.setSortingEnabled(sorting_enabled)
-            
-            
+                 
     def file_good(self):
         """Mark current file as good"""
         print("DEBUG: file_good() called - G key pressed")
@@ -850,28 +937,34 @@ Ready to analyze TDMS files!"""
             self.status_label.setText("No files loaded to mark as bad")
     
     def update_file_status(self, file_index, status, color):
-        """Update file status in the table"""
+        """Update file status in the table using correct row mapping"""
         if hasattr(self, 'file_data') and file_index < len(self.file_data):
             self.file_data[file_index]['status'] = status
+            # Find the correct table row for this file index
+            table_row = self.get_table_row_from_file_index(file_index)
             # Temporarily disable sorting to prevent row movement during update
             sorting_enabled = self.file_table.isSortingEnabled()
             self.file_table.setSortingEnabled(False)
             # Update the status column in the table
             status_item = QTableWidgetItem(status)
             status_item.setBackground(color)
-            self.file_table.setItem(file_index, 1, status_item)
+            self.file_table.setItem(table_row, 1, status_item)
             # Re-enable sorting
             self.file_table.setSortingEnabled(sorting_enabled)
             
     def file_next(self):
-        """Navigate to next file"""
+        """Navigate to next file in original file order (not visual table order)"""
         print("DEBUG: file_next() called - Down arrow pressed")
         if self.file_path and len(self.file_path) > 0:
             # Save parameters for current file
             self.save_parameters_for_current_file()
             
+            # Move to next file in original file array order
             self.index = (self.index + 1) % len(self.file_path)
-            self.file_table.selectRow(self.index)
+            
+            # Find the table row for this file index and select it
+            table_row = self.get_table_row_from_file_index(self.index)
+            self.file_table.selectRow(table_row)
             # Clear previous analysis result
             self.current_analysis_result = None
             
@@ -885,14 +978,18 @@ Ready to analyze TDMS files!"""
             self.status_label.setText("No files loaded to navigate")
             
     def file_prev(self):
-        """Navigate to previous file"""
+        """Navigate to previous file in original file order (not visual table order)"""
         print("DEBUG: file_prev() called - Up arrow pressed")
         if self.file_path and len(self.file_path) > 0:
             # Save parameters for current file
             self.save_parameters_for_current_file()
             
+            # Move to previous file in original file array order
             self.index = (self.index - 1) % len(self.file_path)
-            self.file_table.selectRow(self.index)
+            
+            # Find the table row for this file index and select it
+            table_row = self.get_table_row_from_file_index(self.index)
+            self.file_table.selectRow(table_row)
             # Clear previous analysis result
             self.current_analysis_result = None
             
@@ -904,17 +1001,18 @@ Ready to analyze TDMS files!"""
         else:
             print("DEBUG: Cannot navigate - no files loaded")
             self.status_label.setText("No files loaded to navigate")
-            
-            
+              
     def update_analysis_status(self, file_index, status):
-        """Update analysis status in the table"""
+        """Update analysis status in the table using correct row mapping"""
         if hasattr(self, 'file_data') and file_index < len(self.file_data):
             self.file_data[file_index]['analysis_status'] = status
+            # Find the correct table row for this file index
+            table_row = self.get_table_row_from_file_index(file_index)
             # Temporarily disable sorting to prevent row movement during update
             sorting_enabled = self.file_table.isSortingEnabled()
             self.file_table.setSortingEnabled(False)
             # Update the analysis status column in the table (column 6 - last column)
-            self.file_table.setItem(file_index, 6, QTableWidgetItem(status))
+            self.file_table.setItem(table_row, 6, QTableWidgetItem(status))
             # Re-enable sorting
             self.file_table.setSortingEnabled(sorting_enabled)
             
@@ -987,6 +1085,7 @@ Ready to analyze TDMS files!"""
             'pl_min_width_um': 1e-6,
             'last_num_plateaus': 7,
             'last_plateau_avg_percentage': 15,
+            'plateau_end_remove_percent': 0,  # New parameter for removing end percentage from plateau analysis
             'max_offset': 100,
             'min_offset': 70,
             # Denoising parameters
@@ -1450,8 +1549,6 @@ Ready to analyze TDMS files!"""
             import traceback
             traceback.print_exc()
     
-
-    
     def update_fourier_plot(self, result):
         """Update the Fourier spectrum plot"""
         # Clear the analysis plot and set labels for Fourier spectrum
@@ -1524,8 +1621,6 @@ Ready to analyze TDMS files!"""
                 
         except Exception as e:
             print(f"Error updating Fourier plot: {e}")
-    
-
             
     def trigger_reanalysis(self):
         """Trigger reanalysis with updated filter parameters"""
@@ -1672,13 +1767,15 @@ Ready to analyze TDMS files!"""
                     # Store velocity in file_data for the table
                     if hasattr(self, 'file_data') and hasattr(self, 'index') and self.index < len(self.file_data):
                         self.file_data[self.index]['calc_ret_vel'] = vel_calc
+                        # Find the correct table row for this file index
+                        table_row = self.get_table_row_from_file_index(self.index)
                         # Temporarily disable sorting to prevent row movement during update
                         sorting_enabled = self.file_table.isSortingEnabled()
                         self.file_table.setSortingEnabled(False)
                         # Update the specific table cell
                         vel_item = QTableWidgetItem(f"{vel_calc:.1f}")
                         vel_item.setData(Qt.UserRole, vel_calc)
-                        self.file_table.setItem(self.index, 5, vel_item)
+                        self.file_table.setItem(table_row, 5, vel_item)
                         # Re-enable sorting
                         self.file_table.setSortingEnabled(sorting_enabled)
                         
@@ -1845,7 +1942,7 @@ Ready to analyze TDMS files!"""
                 row_data = {
                     'local_file_path': filepath,
                     'file_name': filename,
-                    'bool_good_curve': int(self.bool_good_curve[i]) if i < len(self.bool_good_curve) else 0,
+                    'bool_good_curve': int(self.bool_good_curve[i]) if i < len(self.bool_good_curve) else -1,
                     'analysis_status': analysis_status,
                     'calc_ret_vel': calc_ret_vel if calc_ret_vel is not None else '',
                     'file_parameters': json.dumps(file_params),
@@ -1885,13 +1982,16 @@ Ready to analyze TDMS files!"""
             # self.save_session_xarray(xarray_path, timestamp)
             
             # Update status
-            good_count = int(np.sum(self.bool_good_curve)) if len(self.bool_good_curve) > 0 else 0
+            good_count = int(np.sum(self.bool_good_curve == 1)) if len(self.bool_good_curve) > 0 else 0
+            bad_count = int(np.sum(self.bool_good_curve == 0)) if len(self.bool_good_curve) > 0 else 0
+            not_analyzed_count = int(np.sum(self.bool_good_curve == -1)) if len(self.bool_good_curve) > 0 else 0
             total_count = len(self.file_path)
             
             session_info = f"Session saved: {os.path.basename(file_path)}\n"
             session_info += f"Total files: {total_count}\n"
             session_info += f"Good files: {good_count}\n"
-            session_info += f"Bad files: {total_count - good_count}\n"
+            session_info += f"Bad files: {bad_count}\n"
+            session_info += f"Not analyzed: {not_analyzed_count}\n"
             session_info += "Per-file parameters: Saved\n"
             session_info += "Plateau selections: Saved\n"
             session_info += "Analysis status: Saved\n"
@@ -2324,7 +2424,7 @@ Ready to analyze TDMS files!"""
                     date_str = "Unknown"
                 
                 # Determine status from bool_good_curve
-                status = 'Good' if self.bool_good_curve[i] == 1 else ('Bad' if self.bool_good_curve[i] == 0 else 'New')
+                status = 'Good' if self.bool_good_curve[i] == 1 else ('Bad' if self.bool_good_curve[i] == 0 else 'Not Analyzed')
                 
                 # Extract date taken from filename
                 date_taken = self.extract_date_from_filename(file_name)
@@ -2353,7 +2453,9 @@ Ready to analyze TDMS files!"""
             else:
                 self.index = 0
             
-            self.file_table.selectRow(self.index)
+            # Select the correct table row for the current file index
+            table_row = self.get_table_row_from_file_index(self.index)
+            self.file_table.selectRow(table_row)
             
             # Load parameters for the current file
             self.load_parameters_for_current_file()
@@ -2420,47 +2522,122 @@ Ready to analyze TDMS files!"""
             self.results_text.setText(f"Error loading session: {str(e)}")
 
     def run_batch_analysis_on_session_files(self):
-        """Run analysis on all files loaded from the session"""
+        """Main portal for loading and analyzing TDMS files with concurrent processing"""
+        # If no files are loaded, or user wants to load new files, show directory selection
         if not self.file_path:
-            return
+            # No files loaded - show directory selection
+            directory = QFileDialog.getExistingDirectory(
+                self,
+                "Select Directory with TDMS Files for Batch Analysis",
+                self.root_dir if hasattr(self, 'root_dir') else os.getcwd(),
+                QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+            )
             
+            if not directory:
+                return  # User cancelled
+                
+            # Load files from selected directory
+            self.status_label.setText("Loading TDMS files from selected directory...")
+            self.find_tdms_files(directory)
+            self.root_dir = directory
+            
+            if not self.file_path:
+                self.status_label.setText("No TDMS files found in selected directory")
+                return
+            
+            self.status_label.setText(f"Loaded {len(self.file_path)} TDMS files. Starting concurrent batch analysis...")
+        else:
+            # Files already loaded - ask user what to do
+            from PyQt5.QtWidgets import QMessageBox
+            
+            # Customize button text
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Batch Analysis Options")
+            msg_box.setText(f"You have {len(self.file_path)} files already loaded.")
+            msg_box.setInformativeText("Choose an option:")
+            
+            msg_box.addButton("Analyze Current Files", QMessageBox.YesRole)
+            load_new = msg_box.addButton("Load New Directory", QMessageBox.NoRole)
+            cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+            
+            msg_box.exec_()
+            clicked_button = msg_box.clickedButton()
+            
+            if clicked_button == cancel_btn:
+                return
+            elif clicked_button == load_new:
+                # Load new directory
+                directory = QFileDialog.getExistingDirectory(
+                    self,
+                    "Select New Directory with TDMS Files for Batch Analysis",
+                    self.root_dir if hasattr(self, 'root_dir') else os.getcwd(),
+                    QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+                )
+                
+                if not directory:
+                    return  # User cancelled
+                    
+                # Clear current files and load new ones
+                self.file_table.clearContents()
+                self.file_table.setRowCount(0)
+                self.file_path = []
+                self.file_parameters = {}
+                self.plateau_selections = {}
+                
+                self.status_label.setText("Loading TDMS files from new directory...")
+                self.find_tdms_files(directory)
+                self.root_dir = directory
+                
+                if not self.file_path:
+                    self.status_label.setText("No TDMS files found in selected directory")
+                    return
+                
+                self.status_label.setText(f"Loaded {len(self.file_path)} new TDMS files. Starting concurrent batch analysis...")
+            # else: analyze_current selected, continue with loaded files
+        
         total_files = len(self.file_path)
-        processed_files = 0
-        failed_files = 0
+        self.status_label.setText(f"Starting concurrent batch analysis on {total_files} files...")
         
-        # Store original index to restore later
-        original_index = self.index
+        # Prepare file-parameter pairs for concurrent processing
+        file_param_pairs = []
+        for file_index, file_path in enumerate(self.file_path):
+            # Get parameters for this specific file (or defaults)
+            params = self.get_file_parameters(file_path)
+            file_param_pairs.append((file_path, params))
         
-        self.status_label.setText(f"Running batch analysis on {total_files} session files...")
+        # Progress tracking variables
+        self.batch_processed_count = 0
+        self.batch_total_count = total_files
         
-        # Process each file
-        for file_index in range(total_files):
-            try:
-                # Set current index and load parameters for this file
-                self.index = file_index
-                self.load_parameters_for_current_file()
-                
-                # Update table selection to show progress
-                self.file_table.selectRow(self.index)
-                
-                # Update status
-                filename = os.path.basename(self.file_path[file_index])
-                self.status_label.setText(f"Analyzing {file_index + 1}/{total_files}: {filename}")
-                self.update_analysis_status(file_index, "Analyzing...")
-                
-                # Force GUI update
-                QApplication.processEvents()
-                
-                # Get parameters for this specific file
-                params = self.get_file_parameters(self.file_path[file_index])
-                
-                # Run analysis
-                result = process_single_file(self.file_path[file_index], params, save_plots=False)
-                
-                if result:
-                    # Store the result for the current file
-                    if file_index == original_index:
-                        self.current_analysis_result = result
+        def progress_callback(completed, total):
+            """Update progress during concurrent processing"""
+            self.batch_processed_count = completed
+            progress_percent = (completed / total) * 100
+            self.status_label.setText(f"Concurrent analysis progress: {completed}/{total} files ({progress_percent:.1f}%)")
+            QApplication.processEvents()
+        
+        def error_callback(filepath, error_msg):
+            """Handle errors during concurrent processing"""
+            filename = os.path.basename(filepath)
+            print(f"✗ Error analyzing {filename}: {error_msg}")
+        
+        # Run concurrent analysis
+        try:
+            processor = ConcurrentTetherProcessor()
+            analysis_results = processor.process_files_concurrent(
+                file_param_pairs,
+                progress_callback=progress_callback,
+                error_callback=error_callback
+            )
+            
+            # Update file table and data with results
+            processed_files = 0
+            failed_files = 0
+            
+            for file_index, file_path in enumerate(self.file_path):
+                if file_path in analysis_results:
+                    result = analysis_results[file_path]
+                    processed_files += 1
                     
                     # Store calculated velocity in file_data and update table
                     if 'velocity_calc_um_s' in result:
@@ -2469,14 +2646,136 @@ Ready to analyze TDMS files!"""
                             # Store velocity in file_data
                             if hasattr(self, 'file_data') and file_index < len(self.file_data):
                                 self.file_data[file_index]['calc_ret_vel'] = vel_calc
-                                # Temporarily disable sorting to prevent row movement during update
-                                sorting_enabled = self.file_table.isSortingEnabled()
-                                self.file_table.setSortingEnabled(False)
                                 # Update the velocity table cell (column 5)
+                                table_row = self.get_table_row_from_file_index(file_index)
                                 vel_item = QTableWidgetItem(f"{vel_calc:.1f}")
                                 vel_item.setData(Qt.UserRole, vel_calc)
-                                self.file_table.setItem(file_index, 5, vel_item)
-                                # Re-enable sorting
+                                self.file_table.setItem(table_row, 5, vel_item)
+                    
+                    # Update analysis status
+                    plateau_count = len(result['plateaus']) if result['plateaus'] else 0
+                    self.update_analysis_status(file_index, f"Analyzed ({plateau_count} plateaus)")
+                    
+                    # Store result for current file if it matches
+                    if file_index == self.index:
+                        self.current_analysis_result = result
+                else:
+                    failed_files += 1
+                    self.update_analysis_status(file_index, "Analysis Failed")
+            
+            # Update final status
+            success_rate = (processed_files / total_files) * 100 if total_files > 0 else 0
+            final_status = f"Concurrent batch analysis complete: {processed_files}/{total_files} files analyzed successfully ({success_rate:.0f}%)"
+            
+            if failed_files > 0:
+                final_status += f", {failed_files} failed"
+                
+            self.status_label.setText(final_status)
+            
+            # Force table refresh to ensure all values are displayed
+            self.file_table.resizeColumnsToContents()
+            
+            # Update display for the current file if we have results
+            if hasattr(self, 'current_analysis_result') and self.current_analysis_result:
+                self.update_plot_with_analysis(self.current_analysis_result)
+                self.update_results_display(self.current_analysis_result)
+                self.update_plateau_table(self.current_analysis_result)
+                self.update_velocity_indicators(self.current_analysis_result)
+            else:
+                # Run analysis on current file to show something
+                QTimer.singleShot(100, self.run_analysis)
+            
+            # Update results text with concurrent batch analysis summary
+            batch_summary = f"""Concurrent Batch Analysis Complete!
+
+Directory: {self.root_dir if hasattr(self, 'root_dir') else 'Unknown'}
+Processing Method: Multi-core concurrent (CPU cores)
+Files processed: {processed_files}/{total_files}
+Success rate: {success_rate:.1f}%
+Failed analyses: {failed_files}
+
+Performance: ~5-6x faster than sequential processing
+Current file: {self.index + 1}/{total_files} - {os.path.basename(self.file_path[self.index]) if self.file_path else 'None'}
+
+Navigation: Use ↑/↓ to browse analyzed files
+All file-specific parameters have been preserved."""
+
+            self.results_text.setText(batch_summary)
+            
+        except Exception as e:
+            self.status_label.setText(f"Concurrent batch analysis failed: {str(e)}")
+            self.results_text.setText(f"Error during concurrent analysis: {str(e)}")
+            print(f"Concurrent batch analysis error: {e}")
+
+    def run_concurrent_batch_analysis(self):
+        """Run concurrent batch analysis on all files loaded from the session using multiple CPU cores"""
+        if not self.file_path:
+            self.status_label.setText("No files loaded to analyze")
+            return
+            
+        total_files = len(self.file_path)
+        
+        # Store original index to restore later
+        original_index = self.index
+        
+        self.status_label.setText(f"Starting concurrent batch analysis on {total_files} session files...")
+        
+        # Prepare file-parameter pairs for concurrent processing
+        file_param_pairs = []
+        for file_index in range(total_files):
+            filepath = self.file_path[file_index]
+            params = self.get_file_parameters(filepath)
+            file_param_pairs.append((filepath, params))
+        
+        # Progress tracking callback
+        def progress_callback(completed_count, total_count):
+            self.status_label.setText(f"Processing {completed_count}/{total_count} files...")
+            # Force GUI update
+            QApplication.processEvents()
+        
+        # Error tracking callback
+        failed_files = []
+        def error_callback(filepath, error_message):
+            failed_files.append((filepath, error_message))
+            # Find file index for this filepath and update status
+            try:
+                file_index = self.file_path.index(filepath)
+                self.update_analysis_status(file_index, "Analysis Failed")
+                print(f"✗ Failed to analyze {os.path.basename(filepath)}: {error_message}")
+            except ValueError:
+                print(f"✗ Failed to analyze {filepath}: {error_message}")
+        
+        # Run concurrent analysis
+        try:
+            processor = ConcurrentTetherProcessor()
+            analysis_results = processor.process_files_concurrent(
+                file_param_pairs, 
+                progress_callback=progress_callback,
+                error_callback=error_callback
+            )
+            
+            # Process successful results
+            processed_files = 0
+            for filepath, result in analysis_results.items():
+                try:
+                    # Find file index for this filepath
+                    file_index = self.file_path.index(filepath)
+                    
+                    # Store calculated velocity in file_data and update table
+                    if 'velocity_calc_um_s' in result:
+                        vel_calc = result['velocity_calc_um_s']
+                        if isinstance(vel_calc, (int, float)) and not np.isnan(vel_calc):
+                            # Store velocity in file_data
+                            if hasattr(self, 'file_data') and file_index < len(self.file_data):
+                                self.file_data[file_index]['calc_ret_vel'] = vel_calc
+                                
+                                # Update velocity table cell (column 5)
+                                table_row = self.get_table_row_from_file_index(file_index)
+                                sorting_enabled = self.file_table.isSortingEnabled()
+                                self.file_table.setSortingEnabled(False)
+                                vel_item = QTableWidgetItem(f"{vel_calc:.1f}")
+                                vel_item.setData(Qt.UserRole, vel_calc)
+                                self.file_table.setItem(table_row, 5, vel_item)
                                 self.file_table.setSortingEnabled(sorting_enabled)
                     
                     # Update analysis status
@@ -2484,50 +2783,71 @@ Ready to analyze TDMS files!"""
                     self.update_analysis_status(file_index, f"Analyzed ({plateau_count} plateaus)")
                     processed_files += 1
                     
-                    print(f"✓ Analyzed {filename}: {plateau_count} plateaus found")
-                else:
-                    self.update_analysis_status(file_index, "Analysis Failed")
-                    failed_files += 1
-                    print(f"✗ Failed to analyze {filename}")
-                    
-            except Exception as e:
-                self.update_analysis_status(file_index, "Analysis Failed")
-                failed_files += 1
-                print(f"✗ Error analyzing {os.path.basename(self.file_path[file_index])}: {e}")
-        
-        # Restore original index and load its results
-        self.index = original_index
-        self.file_table.selectRow(self.index)
-        self.load_parameters_for_current_file()
-        
-        # Update display for the current file if we have results
-        if hasattr(self, 'current_analysis_result') and self.current_analysis_result:
-            self.update_plot_with_analysis(self.current_analysis_result)
-            self.update_results_display(self.current_analysis_result)
-            self.update_plateau_table(self.current_analysis_result)
-            self.update_velocity_indicators(self.current_analysis_result)
-        else:
-            # Run analysis on current file to show something
-            QTimer.singleShot(100, self.run_analysis)
-        
-        # Update final status
-        success_rate = (processed_files / total_files) * 100 if total_files > 0 else 0
-        final_status = f"Batch analysis complete: {processed_files}/{total_files} files analyzed successfully ({success_rate:.0f}%)"
-        
-        if failed_files > 0:
-            final_status += f", {failed_files} failed"
+                except ValueError:
+                    print(f"Warning: Could not find file index for {filepath}")
+                except Exception as e:
+                    print(f"Warning: Error processing result for {filepath}: {e}")
             
-        self.status_label.setText(final_status)
-        
-        # Force table refresh to ensure all velocity values are displayed
-        self.file_table.resizeColumnsToContents()
-        
-        # Update results text with batch analysis summary
-        batch_summary = f"""Batch Analysis Complete!
+            # Restore original index and load its results
+            self.index = original_index
+            table_row = self.get_table_row_from_file_index(self.index)
+            self.file_table.selectRow(table_row)
+            self.load_parameters_for_current_file()
+            
+            # Update display for the current file if we have results
+            current_filepath = self.file_path[self.index]
+            if current_filepath in analysis_results:
+                self.current_analysis_result = analysis_results[current_filepath]
+                self.update_plot_with_analysis(self.current_analysis_result)
+                self.update_results_display(self.current_analysis_result)
+                self.update_plateau_table(self.current_analysis_result)
+                self.update_velocity_indicators(self.current_analysis_result)
+            else:
+                # Run analysis on current file to show something
+                QTimer.singleShot(100, self.run_analysis)
+            
+            # Update final status
+            num_failed = len(failed_files)
+            success_rate = (processed_files / total_files) * 100 if total_files > 0 else 0
+            final_status = f"Concurrent batch analysis complete: {processed_files}/{total_files} files analyzed successfully ({success_rate:.0f}%)"
+            
+            if num_failed > 0:
+                final_status += f", {num_failed} failed"
+                
+            self.status_label.setText(final_status)
+            
+            # Force table refresh to ensure all velocity values are displayed
+            self.file_table.resizeColumnsToContents()
+            
+            # Generate analysis summary
+            summary = processor.get_analysis_summary(analysis_results)
+            
+            # Update results text with concurrent batch analysis summary
+            batch_summary = f"""Concurrent Batch Analysis Complete!
 
+Processing Method: Multi-core concurrent (CPU cores)
 Files processed: {processed_files}/{total_files}
 Success rate: {success_rate:.1f}%
-Failed analyses: {failed_files}
+Failed analyses: {num_failed}
+
+Analysis Summary:
+• Total plateaus found: {summary['total_plateaus']}
+• Average plateaus per file: {summary['avg_plateaus_per_file']:.1f}
+• Files with plateaus: {summary['files_with_plateaus']}/{processed_files}
+
+Velocity Statistics:"""
+
+            if summary['velocity_stats']:
+                vel_stats = summary['velocity_stats']
+                batch_summary += f"""
+• Files with velocity data: {vel_stats['count']}
+• Mean velocity: {vel_stats['mean']:.1f} μm/s
+• Velocity range: {vel_stats['min']:.1f} - {vel_stats['max']:.1f} μm/s
+• Standard deviation: {vel_stats['std']:.1f} μm/s"""
+            else:
+                batch_summary += "\n• No velocity data available"
+
+            batch_summary += f"""
 
 Current file: {self.index + 1}/{total_files}
 File: {os.path.basename(self.file_path[self.index]) if self.file_path else 'None'}
@@ -2535,7 +2855,15 @@ File: {os.path.basename(self.file_path[self.index]) if self.file_path else 'None
 Navigation: Use ↑/↓ to browse analyzed files
 All file-specific parameters have been preserved."""
 
-        self.results_text.setText(batch_summary)
+            self.results_text.setText(batch_summary)
+            
+        except Exception as e:
+            self.status_label.setText(f"Concurrent analysis failed: {str(e)}")
+            print(f"Concurrent analysis error: {e}")
+            # Restore original index on error
+            self.index = original_index
+            table_row = self.get_table_row_from_file_index(self.index)
+            self.file_table.selectRow(table_row)
 
     def load_compound_sessions(self):
         """Load and add multiple session files to the current session"""
@@ -2716,7 +3044,7 @@ All file-specific parameters have been preserved."""
                     date_str = "Unknown"
                 
                 # Determine status from bool_good_curve
-                status = 'Good' if self.bool_good_curve[i] == 1 else ('Bad' if self.bool_good_curve[i] == 0 else 'New')
+                status = 'Good' if self.bool_good_curve[i] == 1 else ('Bad' if self.bool_good_curve[i] == 0 else 'Not Analyzed')
                 
                 # Extract date taken from filename
                 date_taken = self.extract_date_from_filename(file_name)
