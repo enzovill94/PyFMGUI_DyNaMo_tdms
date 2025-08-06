@@ -34,11 +34,11 @@ import json
 import re
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QGroupBox, 
-                             QCheckBox, QTextEdit, QTreeView,
-                             QShortcut, QFileSystemModel, QTableWidget, QTableWidgetItem,
+                             QCheckBox, QTextEdit,
+                             QShortcut, QTableWidget, QTableWidgetItem,
                              QHeaderView, QFileDialog, QDialog, QRadioButton, QButtonGroup,
                              QMainWindow, QAction)
-from PyQt5.QtCore import pyqtSignal, QTimer, Qt, QDir, QObject
+from PyQt5.QtCore import pyqtSignal, QTimer, Qt, QObject
 from PyQt5.QtGui import QKeySequence, QFont
 import pyqtgraph as pg
 from pyfmreader import loadfile
@@ -47,6 +47,66 @@ import datetime
 # Import tether analysis functions
 from tether_script import process_single_file
 from parameter_tree_widget import ParameterTreeWidget
+
+class DragDropTableWidget(QTableWidget):
+    """Custom QTableWidget with drag and drop support for TDMS files"""
+    
+    files_dropped = pyqtSignal(list)  # Signal emitted when files are dropped
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QTableWidget.DropOnly)
+        
+    def dragEnterEvent(self, event):
+        """Handle drag enter events"""
+        if event.mimeData().hasUrls():
+            # Check if any of the dropped items are TDMS files or folders
+            urls = event.mimeData().urls()
+            has_valid_items = False
+            
+            for url in urls:
+                file_path = url.toLocalFile()
+                # Accept TDMS files or directories
+                if file_path.endswith('.tdms') or os.path.isdir(file_path):
+                    has_valid_items = True
+                    break
+            
+            if has_valid_items:
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+        else:
+            event.ignore()
+            
+    def dragMoveEvent(self, event):
+        """Handle drag move events"""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+            
+    def dropEvent(self, event):
+        """Handle drop events"""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            dropped_paths = []
+            
+            for url in urls:
+                file_path = url.toLocalFile()
+                if file_path.endswith('.tdms'):
+                    dropped_paths.append(file_path)
+                elif os.path.isdir(file_path):
+                    # If it's a directory, add it to the list
+                    dropped_paths.append(file_path)
+            
+            if dropped_paths:
+                self.files_dropped.emit(dropped_paths)
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+        else:
+            event.ignore()
 
 class TetherAnalysisGUI(QMainWindow):
     def __init__(self, root_dir, *args, **kwargs):
@@ -85,8 +145,6 @@ class TetherAnalysisGUI(QMainWindow):
         
         # Set initial directory
         self.root_dir = root_dir
-        self.dirModel.setRootPath(root_dir)
-        self.treeview.setRootIndex(self.dirModel.index(root_dir))
         
     def setupUI(self):
         """Setup the user interface"""
@@ -98,16 +156,19 @@ class TetherAnalysisGUI(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
         
-        # Left panel - File browser
+        # Left panel - File table
         left_panel = QVBoxLayout()
-        left_panel.addWidget(QLabel("File Browser"))
+        files_label = QLabel("TDMS Files (Drag & Drop folders/files here)")
+        files_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
+        left_panel.addWidget(files_label)
         
-        self.treeview = QTreeView()
         # Replace QListWidget with QTableWidget for sortable file list
-        self.file_table = QTableWidget()
+        self.file_table = DragDropTableWidget()
         self.setup_file_table()
         
-        left_panel.addWidget(self.treeview, 1)
+        # Connect drag-drop signal
+        self.file_table.files_dropped.connect(self.handle_dropped_files)
+        
         left_panel.addWidget(self.file_table, 1)
         
         # Status info
@@ -117,7 +178,6 @@ class TetherAnalysisGUI(QMainWindow):
         
         left_widget = QWidget()
         left_widget.setLayout(left_panel)
-        left_widget.setFixedWidth(350)
         
         # Center panel - Plots
         center_panel = QVBoxLayout()
@@ -211,15 +271,20 @@ class TetherAnalysisGUI(QMainWindow):
         # Set default instructions text
         default_instructions = """Welcome to Tether Analysis GUI!
 
-            Keyboard Shortcuts:
-            • ↑/↓ - Navigate files (Previous/Next)
-            • G - Mark file as Good
-            • B - Mark file as Bad  
-            • Enter - Run analysis
-            • S - Save session
-            • L - Load session      
+🎯 Getting Started:
+• Drag folders or TDMS files into the file table
+• Use File menu > Change Directory to browse for files
+• Click files in the table to analyze
 
-        Click a folder to start analyzing TDMS files."""
+⌨️ Keyboard Shortcuts:
+• ↑/↓ - Navigate files (Previous/Next)
+• G - Mark file as Good
+• B - Mark file as Bad  
+• Enter - Run analysis
+• S - Save session
+• L - Load session
+
+Ready to analyze TDMS files!"""
         self.results_text.setText(default_instructions)
         
         results_text_layout.addWidget(self.results_text)
@@ -292,13 +357,7 @@ class TetherAnalysisGUI(QMainWindow):
         main_layout.addWidget(self.param_widget)
         
         # Setup file system model
-        self.dirModel = QFileSystemModel()
-        self.dirModel.setRootPath(QDir.rootPath())
-        self.dirModel.setFilter(QDir.NoDotAndDotDot | QDir.AllDirs)
-        self.treeview.setModel(self.dirModel)
-        
         # Connect signals
-        self.treeview.clicked.connect(self.on_clicked_folder)
         self.file_table.cellClicked.connect(self.on_file_table_click)
         self.param_widget.parametersChanged.connect(self.on_parameters_changed)
         
@@ -340,6 +399,13 @@ class TetherAnalysisGUI(QMainWindow):
         load_session_action.setStatusTip('Load a previously saved analysis session (Ctrl+L or L key)')
         load_session_action.triggered.connect(self.load_session)
         file_menu.addAction(load_session_action)
+        
+        # Load Multiple Sessions action
+        load_compound_session_action = QAction('Load Multiple Sessions...', self)
+        load_compound_session_action.setShortcut('Ctrl+Shift+L')
+        load_compound_session_action.setStatusTip('Load and add multiple analysis sessions to current session')
+        load_compound_session_action.triggered.connect(self.load_compound_sessions)
+        file_menu.addAction(load_compound_session_action)
         
         # Save Session action
         save_session_action = QAction('Save Session...', self)
@@ -437,7 +503,7 @@ class TetherAnalysisGUI(QMainWindow):
             # Open directory selection dialog
             new_directory = QFileDialog.getExistingDirectory(
                 self,
-                "Select Root Directory for TDMS Files",
+                "Select Directory with TDMS Files",
                 self.root_dir,
                 QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
             )
@@ -446,10 +512,6 @@ class TetherAnalysisGUI(QMainWindow):
                 # Update root directory
                 old_directory = self.root_dir
                 self.root_dir = new_directory
-                
-                # Update directory model
-                self.dirModel.setRootPath(new_directory)
-                self.treeview.setRootIndex(self.dirModel.index(new_directory))
                 
                 # Clear current file list
                 self.file_table.clearContents()
@@ -465,8 +527,14 @@ class TetherAnalysisGUI(QMainWindow):
                 self.plotview.clear()
                 self.analysis_plotview.clear()
                 
+                # Load TDMS files from the selected directory
+                self.find_tdms_files(new_directory)
+                
                 # Update status
-                self.status_label.setText("Directory changed - select a folder to load TDMS files")
+                if self.file_path:
+                    self.status_label.setText(f"Loaded {len(self.file_path)} TDMS files from selected directory")
+                else:
+                    self.status_label.setText("No TDMS files found in selected directory - try drag-and-drop")
                 self.results_text.setText(f"Directory changed from:\n{old_directory}\n\nTo:\n{new_directory}\n\nClick a folder to start analyzing TDMS files.")
                 self.statusBar().showMessage(f"Changed directory to: {new_directory}")
                 
@@ -511,15 +579,48 @@ class TetherAnalysisGUI(QMainWindow):
         print("  S: Save Session")
         print("  L: Load Session")
         
+    def handle_dropped_files(self, dropped_paths):
+        """Handle files or folders dropped into the file table"""
+        if not dropped_paths:
+            return
+        
+        # Determine what was dropped
+        folders = [path for path in dropped_paths if os.path.isdir(path)]
+        files = [path for path in dropped_paths if path.endswith('.tdms')]
+        
+        try:
+            if folders:
+                # If folders were dropped, load the first folder
+                first_folder = folders[0]
+                self.load_tdms_files(first_folder)
+                if len(folders) > 1:
+                    self.status_label.setText(f"Loaded directory: {os.path.basename(first_folder)} (Note: Only first folder loaded)")
+                else:
+                    self.status_label.setText(f"Loaded directory: {os.path.basename(first_folder)}")
+            elif files:
+                # If individual TDMS files were dropped, load their directory
+                first_file_dir = os.path.dirname(files[0])
+                self.load_tdms_files(first_file_dir)
+                self.status_label.setText(f"Loaded directory with {len(files)} dropped TDMS files")
+            else:
+                self.status_label.setText("No valid TDMS files or folders found")
+                
+        except Exception as e:
+            self.status_label.setText(f"Error loading dropped items: {str(e)}")
+    
+    def load_tdms_files(self, directory):
+        """Load TDMS files from a directory (helper method for drag-drop)"""
+        self.find_tdms_files(directory)
+        
     def setup_file_table(self):
-        """Setup the file table with sortable columns"""
+        """Setup the file table with column headers"""
         # Define columns for file information
-        headers = ['Filename', 'Status', 'Date Taken', 'Date Modified', 'Size (KB)', 'Analysis Status']
+        headers = ['Filename', 'Status', 'Date Taken', 'Date Modified', 'Size (KB)', 'Calc Vel (μm/s)', 'Analysis Status']
         self.file_table.setColumnCount(len(headers))
         self.file_table.setHorizontalHeaderLabels(headers)
         
-        # Enable sorting
-        self.file_table.setSortingEnabled(True)
+        # Disable sorting to prevent visual file position jumping
+        self.file_table.setSortingEnabled(False)
         
         # Set table properties
         self.file_table.setAlternatingRowColors(True)
@@ -651,6 +752,7 @@ class TetherAnalysisGUI(QMainWindow):
                         'date_taken': date_taken,
                         'date_modified': date_str,
                         'size_kb': file_size_kb,
+                        'calc_ret_vel': None,  # Will be updated after analysis
                         'analysis_status': 'Not Analyzed'
                     })
         
@@ -670,6 +772,10 @@ class TetherAnalysisGUI(QMainWindow):
         if not hasattr(self, 'file_data'):
             return
             
+        # Temporarily disable sorting to prevent row shuffling during population
+        sorting_enabled = self.file_table.isSortingEnabled()
+        self.file_table.setSortingEnabled(False)
+        
         self.file_table.setRowCount(len(self.file_data))
         
         for row, file_info in enumerate(self.file_data):
@@ -700,90 +806,24 @@ class TetherAnalysisGUI(QMainWindow):
             size_item.setData(Qt.UserRole, file_info['size_kb'])  # For proper numeric sorting
             self.file_table.setItem(row, 4, size_item)
             
+            # Calc Ret Vel
+            calc_vel = file_info.get('calc_ret_vel', None)
+            if calc_vel is not None and isinstance(calc_vel, (int, float)) and not np.isnan(calc_vel):
+                vel_item = QTableWidgetItem(f"{calc_vel:.1f}")
+                vel_item.setData(Qt.UserRole, calc_vel)  # For proper numeric sorting
+                self.file_table.setItem(row, 5, vel_item)
+            else:
+                self.file_table.setItem(row, 5, QTableWidgetItem(""))
+            
             # Analysis Status
-            self.file_table.setItem(row, 5, QTableWidgetItem(file_info['analysis_status']))
+            self.file_table.setItem(row, 6, QTableWidgetItem(file_info['analysis_status']))
         
         # Resize columns to content
         self.file_table.resizeColumnsToContents()
-            
-    def on_clicked_folder(self, index):
-        """Handle folder selection"""
-        self.save_session()
-        self.file_table.clearContents()
-        self.file_table.setRowCount(0)
         
-        path = self.dirModel.fileInfo(index).absoluteFilePath()
-        
-        # Get directory information for display
-        directory_name = os.path.basename(path)
-        directory_path = path
-        
-        self.find_tdms_files(path)
-        
-        if self.file:
-            self.index = 0
-            self.file_table.selectRow(self.index)
-            # Load parameters for the first file
-            self.load_parameters_for_current_file()
+        # Re-enable sorting
+        self.file_table.setSortingEnabled(sorting_enabled)
             
-            # Calculate directory statistics
-            total_files = len(self.file)
-            total_size_mb = sum(info['size_kb'] for info in self.file_data) / 1024
-            
-            # Get date range from files
-            dates = [info.get('date_taken', '') for info in self.file_data if info.get('date_taken')]
-            date_range = ""
-            if dates:
-                dates_sorted = sorted([d for d in dates if d])
-                if dates_sorted:
-                    earliest = dates_sorted[0][:10]  # Just the date part
-                    latest = dates_sorted[-1][:10]
-                    if earliest == latest:
-                        date_range = f"Date: {earliest}"
-                    else:
-                        date_range = f"Date range: {earliest} to {latest}"
-            
-            # Display directory information
-            directory_info = f"""Directory Loaded: {directory_name}
-
-📁 Path: {directory_path}
-
-📊 TDMS Files Statistics:
-• Total files: {total_files}
-• Total size: {total_size_mb:.1f} MB
-• Status: Ready for analysis
-{date_range}
-
-🎯 Controls:
-• Click files to analyze
-• ↑/↓: Navigate files
-• G/B: Mark Good/Bad
-• Enter: Run analysis
-
-Current file: {os.path.basename(self.file_path[self.index])}"""
-            
-            self.results_text.setText(directory_info)
-            
-            # Automatically run analysis on first file
-            QTimer.singleShot(200, self.run_analysis)
-            self.status_label.setText(f"Loaded {len(self.file)} TDMS files from {directory_name}")
-        else:
-            # No TDMS files found - show directory info anyway
-            no_files_info = f"""Directory: {directory_name}
-
-📁 Path: {directory_path}
-
-⚠️  No TDMS files found in this directory.
-
-The directory exists but contains no .tdms files.
-Try selecting a different folder that contains
-TDMS data files for analysis.
-
-💡 Tip: Look for folders with experimental data
-that contain files ending in .tdms extension."""
-            
-            self.results_text.setText(no_files_info)
-            self.status_label.setText(f"No TDMS files found in {directory_name}")
             
     def file_good(self):
         """Mark current file as good"""
@@ -813,10 +853,15 @@ that contain files ending in .tdms extension."""
         """Update file status in the table"""
         if hasattr(self, 'file_data') and file_index < len(self.file_data):
             self.file_data[file_index]['status'] = status
+            # Temporarily disable sorting to prevent row movement during update
+            sorting_enabled = self.file_table.isSortingEnabled()
+            self.file_table.setSortingEnabled(False)
             # Update the status column in the table
             status_item = QTableWidgetItem(status)
             status_item.setBackground(color)
             self.file_table.setItem(file_index, 1, status_item)
+            # Re-enable sorting
+            self.file_table.setSortingEnabled(sorting_enabled)
             
     def file_next(self):
         """Navigate to next file"""
@@ -865,8 +910,13 @@ that contain files ending in .tdms extension."""
         """Update analysis status in the table"""
         if hasattr(self, 'file_data') and file_index < len(self.file_data):
             self.file_data[file_index]['analysis_status'] = status
-            # Update the analysis status column in the table (column 5 now)
-            self.file_table.setItem(file_index, 5, QTableWidgetItem(status))
+            # Temporarily disable sorting to prevent row movement during update
+            sorting_enabled = self.file_table.isSortingEnabled()
+            self.file_table.setSortingEnabled(False)
+            # Update the analysis status column in the table (column 6 - last column)
+            self.file_table.setItem(file_index, 6, QTableWidgetItem(status))
+            # Re-enable sorting
+            self.file_table.setSortingEnabled(sorting_enabled)
             
     def on_parameters_changed(self, params):
         """Handle parameter changes - automatically run analysis"""
@@ -1618,6 +1668,20 @@ that contain files ending in .tdms extension."""
                 if isinstance(vel_calc, (int, float)) and not np.isnan(vel_calc):
                     self.calc_ret_vel_label.setText(f"Calc Ret Vel: {vel_calc:.1f} μm/s")
                     self.calc_ret_vel_label.setStyleSheet("QLabel { background-color: #E8F5E8; padding: 3px 6px; border-radius: 3px; font-size: 10px; color: black; }")
+                    
+                    # Store velocity in file_data for the table
+                    if hasattr(self, 'file_data') and hasattr(self, 'index') and self.index < len(self.file_data):
+                        self.file_data[self.index]['calc_ret_vel'] = vel_calc
+                        # Temporarily disable sorting to prevent row movement during update
+                        sorting_enabled = self.file_table.isSortingEnabled()
+                        self.file_table.setSortingEnabled(False)
+                        # Update the specific table cell
+                        vel_item = QTableWidgetItem(f"{vel_calc:.1f}")
+                        vel_item.setData(Qt.UserRole, vel_calc)
+                        self.file_table.setItem(self.index, 5, vel_item)
+                        # Re-enable sorting
+                        self.file_table.setSortingEnabled(sorting_enabled)
+                        
                 else:
                     self.calc_ret_vel_label.setText("Calc Ret Vel: N/A")
                     self.calc_ret_vel_label.setStyleSheet("QLabel { background-color: #FFE8E8; padding: 3px 6px; border-radius: 3px; font-size: 10px; color: #666; }")
@@ -1769,11 +1833,21 @@ that contain files ending in .tdms extension."""
                 # Get current plateau selections for this file
                 plateau_selections = self.plateau_selections.get(filepath, [])
                 
+                # Get analysis status and velocity from file_data if available
+                analysis_status = 'Not Analyzed'
+                calc_ret_vel = None
+                
+                if hasattr(self, 'file_data') and i < len(self.file_data):
+                    analysis_status = self.file_data[i].get('analysis_status', 'Not Analyzed')
+                    calc_ret_vel = self.file_data[i].get('calc_ret_vel', None)
+                
                 # Create row data
                 row_data = {
                     'local_file_path': filepath,
                     'file_name': filename,
                     'bool_good_curve': int(self.bool_good_curve[i]) if i < len(self.bool_good_curve) else 0,
+                    'analysis_status': analysis_status,
+                    'calc_ret_vel': calc_ret_vel if calc_ret_vel is not None else '',
                     'file_parameters': json.dumps(file_params),
                     'plateau_selections': json.dumps(plateau_selections),
                     'current_file_index': self.index if i == self.index else -1  # Mark current file
@@ -1794,6 +1868,8 @@ that contain files ending in .tdms extension."""
                 'local_file_path': 'SESSION_METADATA',
                 'file_name': 'SESSION_METADATA', 
                 'bool_good_curve': -1,
+                'analysis_status': 'METADATA',
+                'calc_ret_vel': '',
                 'file_parameters': json.dumps(session_metadata),
                 'plateau_selections': '[]',
                 'current_file_index': self.index
@@ -1818,7 +1894,13 @@ that contain files ending in .tdms extension."""
             session_info += f"Bad files: {total_count - good_count}\n"
             session_info += "Per-file parameters: Saved\n"
             session_info += "Plateau selections: Saved\n"
-            # session_info += f"XArray dataset: {os.path.basename(xarray_path)}"
+            session_info += "Analysis status: Saved\n"
+            
+            # Count how many files have velocity data
+            velocity_count = sum(1 for i in range(total_count) 
+                               if hasattr(self, 'file_data') and i < len(self.file_data) 
+                               and self.file_data[i].get('calc_ret_vel') is not None)
+            session_info += f"Calculated velocities: {velocity_count}/{total_count} saved"
             
             self.results_text.setText(session_info)
             self.status_label.setText(f"Session saved: {os.path.basename(file_path)}")
@@ -2114,14 +2196,12 @@ that contain files ending in .tdms extension."""
             df_session = pd.read_csv(file_path)
             
             # Check for session metadata (first row with special marker)
-            session_metadata = None
             last_file_index = 0
             
             if (len(df_session) > 0 and 
                 df_session.iloc[0]['local_file_path'] == 'SESSION_METADATA'):
                 try:
                     metadata_row = df_session.iloc[0]
-                    session_metadata = json.loads(metadata_row['file_parameters'])
                     last_file_index = metadata_row.get('current_file_index', 0)
                     # Remove metadata row from dataframe
                     df_session = df_session.iloc[1:].reset_index(drop=True)
@@ -2137,6 +2217,8 @@ that contain files ending in .tdms extension."""
             # Check if session has per-file parameters and plateau selections
             has_file_parameters = 'file_parameters' in df_session.columns
             has_plateau_selections = 'plateau_selections' in df_session.columns
+            has_analysis_status = 'analysis_status' in df_session.columns
+            has_calc_velocity = 'calc_ret_vel' in df_session.columns
             
             # Convert bool_good_curve to numeric to ensure proper filtering
             df_session['bool_good_curve'] = pd.to_numeric(df_session['bool_good_curve'], errors='coerce').fillna(0).astype(int)
@@ -2159,6 +2241,8 @@ that contain files ending in .tdms extension."""
             missing_files = []
             loaded_file_parameters = {}
             loaded_plateau_selections = {}
+            loaded_analysis_status = {}
+            loaded_calc_velocity = {}
             
             for _, row in df_session.iterrows():
                 file_path_row = row['local_file_path']
@@ -2192,6 +2276,21 @@ that contain files ending in .tdms extension."""
                     else:
                         # Use empty selection list if no saved selections
                         loaded_plateau_selections[file_path_row] = []
+                    
+                    # Load analysis status if available
+                    if has_analysis_status and pd.notna(row['analysis_status']):
+                        loaded_analysis_status[file_path_row] = row['analysis_status']
+                    else:
+                        loaded_analysis_status[file_path_row] = 'Not Analyzed'
+                    
+                    # Load calculated velocity if available
+                    if has_calc_velocity and pd.notna(row['calc_ret_vel']) and row['calc_ret_vel'] != '':
+                        try:
+                            loaded_calc_velocity[file_path_row] = float(row['calc_ret_vel'])
+                        except (ValueError, TypeError):
+                            loaded_calc_velocity[file_path_row] = None
+                    else:
+                        loaded_calc_velocity[file_path_row] = None
                 else:
                     missing_files.append(row['file_name'])
             
@@ -2230,6 +2329,10 @@ that contain files ending in .tdms extension."""
                 # Extract date taken from filename
                 date_taken = self.extract_date_from_filename(file_name)
                 
+                # Get saved analysis status and velocity
+                analysis_status = loaded_analysis_status.get(file_path, 'Not Analyzed')
+                calc_ret_vel = loaded_calc_velocity.get(file_path, None)
+                
                 self.file_data.append({
                     'filename': file_name,
                     'full_path': file_path,
@@ -2237,7 +2340,8 @@ that contain files ending in .tdms extension."""
                     'date_taken': date_taken,
                     'date_modified': date_str,
                     'size_kb': file_size_kb,
-                    'analysis_status': 'Not Analyzed'
+                    'calc_ret_vel': calc_ret_vel,
+                    'analysis_status': analysis_status
                 })
             
             # Populate the table
@@ -2278,9 +2382,21 @@ that contain files ending in .tdms extension."""
                 session_info += "Per-file parameters: Using defaults (old session format)\n"
             
             if has_plateau_selections:
-                session_info += "Plateau selections: Restored"
+                session_info += "Plateau selections: Restored\n"
             else:
-                session_info += "Plateau selections: Using defaults (all selected)"
+                session_info += "Plateau selections: Using defaults (all selected)\n"
+            
+            if has_analysis_status:
+                session_info += "Analysis status: Restored\n"
+            else:
+                session_info += "Analysis status: Using defaults (Not Analyzed)\n"
+            
+            if has_calc_velocity:
+                # Count how many files have velocity data
+                velocity_count = sum(1 for v in loaded_calc_velocity.values() if v is not None)
+                session_info += f"Calculated velocities: {velocity_count}/{total_count} restored"
+            else:
+                session_info += "Calculated velocities: None (old session format)"
             
             if missing_files:
                 session_info += f"\n\nMissing files ({len(missing_files)}):\n"
@@ -2346,6 +2462,23 @@ that contain files ending in .tdms extension."""
                     if file_index == original_index:
                         self.current_analysis_result = result
                     
+                    # Store calculated velocity in file_data and update table
+                    if 'velocity_calc_um_s' in result:
+                        vel_calc = result['velocity_calc_um_s']
+                        if isinstance(vel_calc, (int, float)) and not np.isnan(vel_calc):
+                            # Store velocity in file_data
+                            if hasattr(self, 'file_data') and file_index < len(self.file_data):
+                                self.file_data[file_index]['calc_ret_vel'] = vel_calc
+                                # Temporarily disable sorting to prevent row movement during update
+                                sorting_enabled = self.file_table.isSortingEnabled()
+                                self.file_table.setSortingEnabled(False)
+                                # Update the velocity table cell (column 5)
+                                vel_item = QTableWidgetItem(f"{vel_calc:.1f}")
+                                vel_item.setData(Qt.UserRole, vel_calc)
+                                self.file_table.setItem(file_index, 5, vel_item)
+                                # Re-enable sorting
+                                self.file_table.setSortingEnabled(sorting_enabled)
+                    
                     # Update analysis status
                     plateau_count = len(result['plateaus']) if result['plateaus'] else 0
                     self.update_analysis_status(file_index, f"Analyzed ({plateau_count} plateaus)")
@@ -2386,6 +2519,9 @@ that contain files ending in .tdms extension."""
             
         self.status_label.setText(final_status)
         
+        # Force table refresh to ensure all velocity values are displayed
+        self.file_table.resizeColumnsToContents()
+        
         # Update results text with batch analysis summary
         batch_summary = f"""Batch Analysis Complete!
 
@@ -2400,6 +2536,257 @@ Navigation: Use ↑/↓ to browse analyzed files
 All file-specific parameters have been preserved."""
 
         self.results_text.setText(batch_summary)
+
+    def load_compound_sessions(self):
+        """Load and add multiple session files to the current session"""
+        try:
+            # Open file dialog to select multiple session CSV files
+            file_paths, _ = QFileDialog.getOpenFileNames(
+                self, 
+                "Add Multiple Tether Analysis Sessions to Current Session", 
+                self.root_dir, 
+                "CSV files (*.csv);;All files (*.*)"
+            )
+            
+            if not file_paths:
+                return  # User cancelled
+            
+            # Show dialog to choose load options
+            dialog = LoadSessionDialog(self)
+            dialog.setModal(True)
+            dialog.raise_()
+            dialog.activateWindow()
+            if dialog.exec_() != QDialog.Accepted:
+                return  # User cancelled the options dialog
+            
+            load_option = dialog.get_selected_option()
+            run_batch_analysis = dialog.get_batch_analysis_enabled()
+            
+            # Start with current session data or empty if none
+            if hasattr(self, 'file_path') and self.file_path:
+                # Keep existing session data
+                combined_file_paths = list(self.file_path)
+                combined_file_names = list(self.file)
+                combined_bool_good_curve = list(self.bool_good_curve)
+                combined_file_parameters = dict(self.file_parameters) if hasattr(self, 'file_parameters') else {}
+                combined_plateau_selections = dict(self.plateau_selections) if hasattr(self, 'plateau_selections') else {}
+                
+                # Also preserve existing analysis status and velocity data
+                combined_analysis_status = {}
+                combined_calc_velocity = {}
+                if hasattr(self, 'file_data'):
+                    for i, file_data in enumerate(self.file_data):
+                        if i < len(combined_file_paths):
+                            file_path = combined_file_paths[i]
+                            combined_analysis_status[file_path] = file_data.get('analysis_status', 'Not Analyzed')
+                            combined_calc_velocity[file_path] = file_data.get('calc_ret_vel', None)
+                
+                session_info = f"Adding {len(file_paths)} session files to current session with {len(self.file_path)} files:\n\n"
+                original_file_count = len(self.file_path)
+            else:
+                # No current session, start fresh
+                combined_file_paths = []
+                combined_file_names = []
+                combined_bool_good_curve = []
+                combined_file_parameters = {}
+                combined_plateau_selections = {}
+                combined_analysis_status = {}
+                combined_calc_velocity = {}
+                
+                session_info = f"Loading {len(file_paths)} session files (no current session):\n\n"
+                original_file_count = 0
+            
+            for session_file in file_paths:
+                try:
+                    # Load each session CSV file
+                    df_session = pd.read_csv(session_file)
+                    
+                    # Check for session metadata and remove if present
+                    if (len(df_session) > 0 and 
+                        df_session.iloc[0]['local_file_path'] == 'SESSION_METADATA'):
+                        df_session = df_session.iloc[1:].reset_index(drop=True)
+                    
+                    # Validate the CSV format
+                    required_columns = ['local_file_path', 'file_name', 'bool_good_curve']
+                    if not all(col in df_session.columns for col in required_columns):
+                        session_info += f"⚠ Skipped {os.path.basename(session_file)}: Invalid format\n"
+                        continue
+                    
+                    # Check for additional columns
+                    has_file_parameters = 'file_parameters' in df_session.columns
+                    has_plateau_selections = 'plateau_selections' in df_session.columns
+                    has_analysis_status = 'analysis_status' in df_session.columns
+                    has_calc_velocity = 'calc_ret_vel' in df_session.columns
+                    
+                    # Convert bool_good_curve to numeric
+                    df_session['bool_good_curve'] = pd.to_numeric(df_session['bool_good_curve'], errors='coerce').fillna(0).astype(int)
+                    
+                    # Filter files based on user selection
+                    if load_option == "good":
+                        df_session = df_session[df_session['bool_good_curve'] == 1]
+                    elif load_option == "bad":
+                        df_session = df_session[df_session['bool_good_curve'] == 0]
+                    
+                    # Process each file in this session
+                    session_files_added = 0
+                    for _, row in df_session.iterrows():
+                        file_path_row = row['local_file_path']
+                        
+                        # Skip duplicates (same file path already loaded)
+                        if file_path_row in combined_file_paths:
+                            continue
+                            
+                        # Check if file exists
+                        if os.path.exists(file_path_row):
+                            combined_file_paths.append(file_path_row)
+                            combined_file_names.append(row['file_name'])
+                            combined_bool_good_curve.append(int(row['bool_good_curve']))
+                            session_files_added += 1
+                            
+                            # Load per-file parameters if available
+                            if has_file_parameters and pd.notna(row['file_parameters']):
+                                try:
+                                    file_params = json.loads(row['file_parameters'])
+                                    combined_file_parameters[file_path_row] = file_params
+                                except Exception:
+                                    combined_file_parameters[file_path_row] = self.get_default_parameters()
+                            else:
+                                combined_file_parameters[file_path_row] = self.get_default_parameters()
+                            
+                            # Load plateau selections if available
+                            if has_plateau_selections and pd.notna(row['plateau_selections']):
+                                try:
+                                    plateau_selections = json.loads(row['plateau_selections'])
+                                    combined_plateau_selections[file_path_row] = plateau_selections
+                                except Exception:
+                                    combined_plateau_selections[file_path_row] = []
+                            else:
+                                combined_plateau_selections[file_path_row] = []
+                            
+                            # Load analysis status if available
+                            if has_analysis_status and pd.notna(row['analysis_status']):
+                                combined_analysis_status[file_path_row] = row['analysis_status']
+                            else:
+                                combined_analysis_status[file_path_row] = 'Not Analyzed'
+                            
+                            # Load calculated velocity if available
+                            if has_calc_velocity and pd.notna(row['calc_ret_vel']) and row['calc_ret_vel'] != '':
+                                try:
+                                    combined_calc_velocity[file_path_row] = float(row['calc_ret_vel'])
+                                except (ValueError, TypeError):
+                                    combined_calc_velocity[file_path_row] = None
+                            else:
+                                combined_calc_velocity[file_path_row] = None
+                    
+                    session_info += f"✓ {os.path.basename(session_file)}: {session_files_added} files added\n"
+                    
+                except Exception as e:
+                    session_info += f"✗ {os.path.basename(session_file)}: Error - {str(e)}\n"
+            
+            if not combined_file_paths:
+                self.status_label.setText("Error: No files found in any session")
+                return
+            
+            # Preserve current file index if we had a session before
+            original_index = self.index if hasattr(self, 'index') and original_file_count > 0 else 0
+            
+            # Clear current file table
+            self.file_table.clearContents()
+            self.file_table.setRowCount(0)
+            
+            # Load the combined session data
+            self.file_path = combined_file_paths
+            self.file = combined_file_names
+            self.bool_good_curve = np.array(combined_bool_good_curve)
+            self.file_parameters = combined_file_parameters
+            self.plateau_selections = combined_plateau_selections
+            
+            # Create file data for the table
+            from datetime import datetime
+            self.file_data = []
+            for i, (file_path, file_name) in enumerate(zip(combined_file_paths, combined_file_names)):
+                # Get file statistics
+                try:
+                    stat_info = os.stat(file_path)
+                    file_size_kb = stat_info.st_size / 1024
+                    mod_time = datetime.fromtimestamp(stat_info.st_mtime)
+                    date_str = mod_time.strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    file_size_kb = 0
+                    date_str = "Unknown"
+                
+                # Determine status from bool_good_curve
+                status = 'Good' if self.bool_good_curve[i] == 1 else ('Bad' if self.bool_good_curve[i] == 0 else 'New')
+                
+                # Extract date taken from filename
+                date_taken = self.extract_date_from_filename(file_name)
+                
+                # Get saved analysis status and velocity
+                analysis_status = combined_analysis_status.get(file_path, 'Not Analyzed')
+                calc_ret_vel = combined_calc_velocity.get(file_path, None)
+                
+                self.file_data.append({
+                    'filename': file_name,
+                    'full_path': file_path,
+                    'status': status,
+                    'date_taken': date_taken,
+                    'date_modified': date_str,
+                    'size_kb': file_size_kb,
+                    'calc_ret_vel': calc_ret_vel,
+                    'analysis_status': analysis_status
+                })
+            
+            # Populate the table
+            self.populate_file_table()
+            
+            # Set file index (preserve original position if adding to existing session)
+            if original_file_count > 0 and original_index < len(combined_file_paths):
+                self.index = original_index
+            else:
+                self.index = 0
+                
+            self.file_table.selectRow(self.index)
+            
+            # Load parameters for the current file
+            self.load_parameters_for_current_file()
+            
+            # Update status and results text
+            good_count = int(np.sum(self.bool_good_curve))
+            total_count = len(self.bool_good_curve)
+            
+            option_display = {
+                "all": "All files",
+                "good": "Good files only", 
+                "bad": "Bad files only"
+            }[load_option]
+            
+            session_info += "\nCombined Session Summary:\n"
+            session_info += f"Load option: {option_display}\n"
+            session_info += f"Original files in session: {original_file_count}\n"
+            session_info += f"New files added: {total_count - original_file_count}\n"
+            session_info += f"Total files now: {total_count}\n"
+            session_info += f"Good files: {good_count}\n"
+            session_info += f"Bad files: {total_count - good_count}\n"
+            
+            if original_file_count > 0:
+                session_info += f"Starting at file: {self.index + 1}/{total_count} (preserved position)\n"
+            else:
+                session_info += f"Starting at file: 1/{total_count}\n"
+            
+            self.results_text.setText(session_info)
+            
+            # Conditionally run batch analysis based on user selection
+            if run_batch_analysis:
+                QTimer.singleShot(200, self.run_batch_analysis_on_session_files)
+            else:
+                # Just analyze the current file to show something
+                QTimer.singleShot(200, self.run_analysis)
+            
+            self.status_label.setText(f"Added {len(file_paths)} sessions: {good_count}/{total_count} good files (total)")
+            
+        except Exception as e:
+            self.status_label.setText(f"Error loading compound sessions: {str(e)}")
+            self.results_text.setText(f"Error loading compound sessions: {str(e)}")
 
 
 class LoadSessionDialog(QDialog):
