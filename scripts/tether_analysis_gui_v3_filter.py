@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QCheckBox, QTextEdit,
                              QShortcut, QTableWidget, QTableWidgetItem,
                              QHeaderView, QFileDialog, QDialog, QRadioButton, QButtonGroup,
-                             QMainWindow, QAction)
+                             QMainWindow, QAction, QProgressDialog)
 from PyQt5.QtCore import pyqtSignal, QTimer, Qt, QObject
 from PyQt5.QtGui import QKeySequence, QFont
 import pyqtgraph as pg
@@ -48,6 +48,42 @@ import datetime
 from tether_script import process_single_file
 from parameter_tree_widget import ParameterTreeWidget
 from concurrent_tether_analysis import ConcurrentTetherProcessor
+
+class BatchAnalysisProgressDialog(QProgressDialog):
+    """Custom progress dialog for batch analysis operations"""
+    
+    def __init__(self, title="Batch Analysis Progress", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setLabelText("Initializing batch analysis...")
+        self.setMinimum(0)
+        self.setMaximum(100)
+        self.setValue(0)
+        self.setModal(True)
+        self.setAutoClose(False)
+        self.setAutoReset(False)
+        self.resize(400, 120)
+        
+        # Center the dialog
+        if parent:
+            parent_geo = parent.geometry()
+            x = parent_geo.x() + (parent_geo.width() - self.width()) // 2
+            y = parent_geo.y() + (parent_geo.height() - self.height()) // 2
+            self.move(x, y)
+    
+    def update_progress(self, current, total, message="Processing..."):
+        """Update progress with current/total and custom message"""
+        if total > 0:
+            percentage = int((current / total) * 100)
+            self.setValue(percentage)
+            self.setLabelText(f"{message}\nProgress: {current}/{total} files ({percentage}%)")
+        QApplication.processEvents()
+    
+    def set_final_message(self, message):
+        """Set final completion message"""
+        self.setValue(100)
+        self.setLabelText(message)
+        QApplication.processEvents()
 
 class DragDropTableWidget(QTableWidget):
     """Custom QTableWidget with drag and drop support for TDMS files"""
@@ -2596,7 +2632,11 @@ Ready to analyze TDMS files efficiently!"""
             # else: analyze_current selected, continue with loaded files
         
         total_files = len(self.file_path)
-        self.status_label.setText(f"Starting concurrent batch analysis on {total_files} files...")
+        
+        # Create and show progress dialog
+        progress_dialog = BatchAnalysisProgressDialog("Concurrent Batch Analysis", self)
+        progress_dialog.show()
+        progress_dialog.update_progress(0, total_files, "Preparing file analysis...")
         
         # Prepare file-parameter pairs for concurrent processing
         file_param_pairs = []
@@ -2604,6 +2644,8 @@ Ready to analyze TDMS files efficiently!"""
             # Get parameters for this specific file (or defaults)
             params = self.get_file_parameters(file_path)
             file_param_pairs.append((file_path, params))
+        
+        progress_dialog.update_progress(0, total_files, "Starting concurrent processing...")
         
         # Progress tracking variables
         self.batch_processed_count = 0
@@ -2613,6 +2655,10 @@ Ready to analyze TDMS files efficiently!"""
             """Update progress during concurrent processing"""
             self.batch_processed_count = completed
             progress_percent = (completed / total) * 100
+            current_file = os.path.basename(self.file_path[min(completed-1, len(self.file_path)-1)]) if completed > 0 else "Starting..."
+            
+            # Update both the dialog and status label
+            progress_dialog.update_progress(completed, total, f"Analyzing: {current_file}")
             self.status_label.setText(f"Concurrent analysis progress: {completed}/{total} files ({progress_percent:.1f}%)")
             QApplication.processEvents()
         
@@ -2702,7 +2748,13 @@ All file-specific parameters have been preserved."""
 
             self.results_text.setText(batch_summary)
             
+            # Show completion message and close progress dialog
+            progress_dialog.set_final_message(f"Analysis Complete!\n{processed_files}/{total_files} files processed successfully")
+            QTimer.singleShot(2000, progress_dialog.close)  # Auto-close after 2 seconds
+            
         except Exception as e:
+            progress_dialog.set_final_message(f"Analysis Failed!\nError: {str(e)}")
+            QTimer.singleShot(3000, progress_dialog.close)  # Auto-close after 3 seconds
             self.status_label.setText(f"Concurrent batch analysis failed: {str(e)}")
             self.results_text.setText(f"Error during concurrent analysis: {str(e)}")
             print(f"Concurrent batch analysis error: {e}")
@@ -2715,10 +2767,13 @@ All file-specific parameters have been preserved."""
             
         total_files = len(self.file_path)
         
+        # Create and show progress dialog
+        progress_dialog = BatchAnalysisProgressDialog("Concurrent Batch Analysis (Session Files)", self)
+        progress_dialog.show()
+        progress_dialog.update_progress(0, total_files, "Preparing session files for analysis...")
+        
         # Store original index to restore later
         original_index = self.index
-        
-        self.status_label.setText(f"Starting concurrent batch analysis on {total_files} session files...")
         
         # Prepare file-parameter pairs for concurrent processing
         file_param_pairs = []
@@ -2727,8 +2782,12 @@ All file-specific parameters have been preserved."""
             params = self.get_file_parameters(filepath)
             file_param_pairs.append((filepath, params))
         
+        progress_dialog.update_progress(0, total_files, "Starting concurrent processing...")
+        
         # Progress tracking callback
         def progress_callback(completed_count, total_count):
+            current_file = os.path.basename(self.file_path[min(completed_count-1, len(self.file_path)-1)]) if completed_count > 0 else "Starting..."
+            progress_dialog.update_progress(completed_count, total_count, f"Analyzing: {current_file}")
             self.status_label.setText(f"Processing {completed_count}/{total_count} files...")
             # Force GUI update
             QApplication.processEvents()
@@ -2857,7 +2916,14 @@ All file-specific parameters have been preserved."""
 
             self.results_text.setText(batch_summary)
             
+            # Show completion message and close progress dialog
+            success_rate = (processed_files / total_files) * 100 if total_files > 0 else 0
+            progress_dialog.set_final_message(f"Analysis Complete!\n{processed_files}/{total_files} files processed successfully ({success_rate:.1f}%)")
+            QTimer.singleShot(2000, progress_dialog.close)  # Auto-close after 2 seconds
+            
         except Exception as e:
+            progress_dialog.set_final_message(f"Analysis Failed!\nError: {str(e)}")
+            QTimer.singleShot(3000, progress_dialog.close)  # Auto-close after 3 seconds
             self.status_label.setText(f"Concurrent analysis failed: {str(e)}")
             print(f"Concurrent analysis error: {e}")
             # Restore original index on error
@@ -3115,7 +3181,6 @@ All file-specific parameters have been preserved."""
         except Exception as e:
             self.status_label.setText(f"Error loading compound sessions: {str(e)}")
             self.results_text.setText(f"Error loading compound sessions: {str(e)}")
-
 
 class LoadSessionDialog(QDialog):
     """Dialog for selecting which files to load from session"""
