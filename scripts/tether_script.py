@@ -23,6 +23,9 @@ import numpy as np
 import pandas as pd
 import math
 import os
+import ast
+from scipy.fft import fft, ifft, fftfreq
+from scipy.signal import detrend
 
 # Import required modules
 from pyfmreader import loadfile
@@ -288,6 +291,10 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     velocity_um_s = -(calculate_velocity(x, dt_arr))
     print (f'velocity: {velocity_um_s:.4e} m/s, dt: {dt:.4e} sec')
     
+    # Find index of maximum deflection in the whole first half of the force curve
+    idx_max = np.argmax(y[:len(y) // 2])
+    print(f"Index of maximum deflection: {idx_max}, value: {y[idx_max]:.4e}")
+
     # Calculate derivative of deflection with respect to time
     dy = np.gradient(y, dt_arr * velocity_um_s)
     dy_smooth = np.abs(dy)
@@ -324,6 +331,8 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     if start is not None and len(y) - start >= pl_min_width_points:
         plateaus.append((start, len(y)))
     
+    print(f'Raw plateaus found: {len(plateaus)}')
+    
     # Keep only the last N plateaus
     if final_params['last_num_plateaus'] == -1:
         # plot all plateaus
@@ -331,6 +340,8 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     else:
         # plot only the last N plateaus
         plateaus = plateaus[-final_params['last_num_plateaus']:]
+    
+    print(f'Plateaus after filtering (last {final_params["last_num_plateaus"]}): {len(plateaus)}')
     
     # Calculate plateau statistics
     plateau_avg_idx_arr = []
@@ -385,6 +396,8 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         else:
             plateau_slopes.append(np.nan)
 
+    #
+
     # Create results DataFrame for plateaus
     df_plat = pd.DataFrame({
         'plateaus': [i for i, _ in enumerate(plateaus)],
@@ -416,6 +429,7 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         'dy_abs_sav': dy_abs_sav,
         # 'is_flat': is_flat,
         'dt': dt_arr,
+        'idx_max': idx_max,
     }
     
     return plateaus, df_plat, df_data, velocity_um_s
@@ -475,7 +489,93 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
     max_offset, min_offset = update_tilt_range(ret_piezo, max_offset, min_offset, offset_type='percentage')
     tilt_ret_deflection_N = correct_tilt(ret_piezo, ret_deflection, max_offset, min_offset)
 
-    # ADD Filter processing here
+    # ADD Denoise processing here
+    filtered_signal = tilt_ret_deflection_N.copy()
+    fourier_data = {}  # Initialize Fourier data storage
+    
+    # Apply denoising if enabled
+    if params.get('enable_denoising', False):
+        try:
+            # Get denoising parameters
+            w0 = params.get('denoise_w0', 0.1)
+            w1 = params.get('denoise_w1', 1.0)
+            butterworth_order = params.get('butterworth_order', 5)
+            remove_percent = params.get('denoise_remove_percent', 10)
+            remove_end_percent = params.get('denoise_remove_end_percent', 10)
+            use_interpolation = params.get('denoise_interp', True)
+            w_min = params.get('denoise_w_min', 1.0)
+            w_max = params.get('denoise_w_max', 6.0)
+            
+            # Calculate remove indices for both start and end
+            remove_start_index = remove_percent * len(ret_piezo) // 100
+            remove_end_index = remove_end_percent * len(ret_piezo) // 100
+            end_index = len(ret_piezo) - remove_end_index
+            
+            # Prepare signal for filtering (remove both start and end portions)
+            from scipy.signal import detrend
+            signal_trimmed = detrend(tilt_ret_deflection_N[remove_start_index:end_index])
+            
+            # Calculate parameters for FFT
+            sampling_rate = 1 / relative_SR_ret
+            velocity_calc = -calculate_velocity(ret_piezo, time_ret)  # µm/s
+            
+            # Apply Butterworth band-stop filter
+            N = len(signal_trimmed)
+            # Convert velocity to m/s for proper unit handling
+            velocity_calc_m_s = velocity_calc * 1e-6  # Convert µm/s to m/s
+            T = velocity_calc_m_s / sampling_rate  # m/sample
+
+            # FFT
+            yf = fft(signal_trimmed)
+            xf = fftfreq(N, T)  # Now in units of m⁻¹
+            
+            # Store original FFT data
+            fourier_data['xf'] = xf
+            fourier_data['yf_original'] = yf.copy()
+            
+            # Apply Butterworth filter (convert µm⁻¹ to m⁻¹)
+            w0_m_inv = w0 * 1e6  # Convert µm⁻¹ to m⁻¹
+            w1_m_inv = w1 * 1e6  # Convert µm⁻¹ to m⁻¹
+            butter_mask = butterworth_bandstop(xf, w0_m_inv, w1_m_inv, order=butterworth_order)
+            yf_filtered = yf * butter_mask
+            filtered_deflection = np.real(ifft(yf_filtered))
+            
+            # Store Butterworth filtered FFT data
+            fourier_data['yf_filtered'] = yf_filtered.copy()
+            
+            # Update filtered signal (place filtered data back in the correct position)
+            filtered_signal[remove_start_index:end_index] = filtered_deflection
+            
+            # Apply single Fourier band suppression
+            filtered_signal = suppress_fourier_band(
+                filtered_signal,
+                sampling_rate=sampling_rate,
+                velocity=velocity_calc,
+                w_range=(w_min, w_max),
+                remove=remove_start_index,
+                remove_end=remove_end_index,
+                interp=use_interpolation,
+            )
+            
+            # Store final band-suppressed FFT data
+            final_signal_trimmed = filtered_signal[remove_start_index:end_index]
+            yf_band_suppressed = fft(final_signal_trimmed)
+            fourier_data['yf_band_suppressed'] = yf_band_suppressed
+            
+            print(f"  Applied denoising: W0={w0}, W1={w1}, Order={butterworth_order}, Range=[{w_min}, {w_max}]")
+            
+        except Exception as e:
+            print(f"  Warning: Denoising failed, using original signal: {e}")
+            filtered_signal = tilt_ret_deflection_N.copy()
+    
+    # Use filtered signal for further processing
+    tilt_ret_deflection_N = filtered_signal
+    
+    # Apply baseline correction a second time after denoising (using same offset values)
+    if params.get('enable_denoising', False):
+        print("  Applying second baseline correction after denoising...")
+        tilt_ret_deflection_N = correct_tilt(ret_piezo, tilt_ret_deflection_N, max_offset, min_offset)
+        print(f"  Second baseline correction applied using same offsets: max={max_offset}, min={min_offset}")
     
     # Find contact point
     index_first_positive = find_first_positive(tilt_ret_deflection_N)
@@ -536,6 +636,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
         'velocity_metadata': -vel_ret_um_s,
         'velocity_calc_um_s': velocity_calc_um_s,
         'df_data': df_data,
+        'fourier_data': fourier_data,
     }
     
     print(f"  Found {len(plateaus)} plateaus")
@@ -672,26 +773,26 @@ def batch_process_files(directory, file_indices=None, params=None, save_results=
     
     return all_results
 
-
-
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.fft import fft, ifft, fftfreq
-from scipy.signal import detrend
-
-def suppress_fourier_band(signal, sampling_rate, velocity, w_range, remove=0, interp=True):
-    signal_trimmed = signal[remove:]
+def suppress_fourier_band(signal, sampling_rate, velocity, w_range, remove=0, remove_end=0, interp=True):
+    # Calculate end index
+    end_index = len(signal) - remove_end
+    signal_trimmed = signal[remove:end_index]
     N = len(signal_trimmed)
-    T = velocity / sampling_rate  # µm/sample
+    # Convert velocity from µm/s to m/s for proper unit handling
+    velocity_m_s = velocity * 1e-6
+    T = velocity_m_s / sampling_rate  # m/sample
 
     yf = fft(signal_trimmed)
-    xf = fftfreq(N, T)
+    xf = fftfreq(N, T)  # Now in units of m⁻¹
 
     xf_half = xf[:N//2]
     yf_half = yf[:N//2]
 
+    # Convert w_range from µm⁻¹ to m⁻¹ for proper comparison
+    w_range_m_inv = [w_range[0] * 1e6, w_range[1] * 1e6]
+    
     # Get mask only for positive frequencies
-    mask = (xf_half >= w_range[0]) & (xf_half <= w_range[1])
+    mask = (xf_half >= w_range_m_inv[0]) & (xf_half <= w_range_m_inv[1])
     xf_masked = xf_half[mask]
     yf_masked = yf_half[mask]
 
@@ -715,7 +816,7 @@ def suppress_fourier_band(signal, sampling_rate, velocity, w_range, remove=0, in
 
     signal_filtered = np.real(ifft(yf_interp))
     full_output = signal.copy()
-    full_output[remove:] = signal_filtered
+    full_output[remove:end_index] = signal_filtered
     return full_output
 
 # --- Butterworth Band-Stop Filter ---
@@ -725,8 +826,7 @@ def butterworth_bandstop(xf, f_low, f_high, order=5):
     eps = 1e-12
     return 1 / (1 + ((xf * bandwidth) / ((xf**2 - f_center**2) + eps))**(2 * order))
 
-
-
+# to run batch analysis standalone
 if __name__ == "__main__":
     # Configuration
     directory = '/Users/evillz/Data/article/2025_07_01_THP1_phd/test_analysis/300'

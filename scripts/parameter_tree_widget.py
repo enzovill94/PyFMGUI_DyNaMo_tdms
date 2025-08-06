@@ -3,6 +3,7 @@ from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtGui import QFont
 from pyqtgraph.parametertree import Parameter, ParameterTree
 import os
+import ast
 
 class ParameterTreeWidget(QWidget):
     parametersChanged = pyqtSignal(dict)
@@ -28,6 +29,11 @@ class ParameterTreeWidget(QWidget):
         # Parameter tree
         self.param_tree = ParameterTree()
         layout.addWidget(self.param_tree)
+        
+        # Set column widths to make value column smaller
+        header = self.param_tree.header()
+        header.resizeSection(0, 180)  # Parameter name column width
+        header.resizeSection(1, 50)   # Value column width (smaller)
         
         # Buttons
         button_layout = QHBoxLayout()
@@ -71,7 +77,23 @@ class ParameterTreeWidget(QWidget):
                     {'name': 'Max Tilt Offset (%)', 'type': 'int', 'value': 100, 'limits': (50, 100), 'step': 5, 'key': 'max_offset'},
                     {'name': 'Min Tilt Offset (%)', 'type': 'int', 'value': 70, 'limits': (30, 90), 'step': 5, 'key': 'min_offset'},
                 ]
-            }
+            },
+            {
+                'name': 'Denoise Filter',
+                'type': 'group',
+                'children': [
+                    {'name': 'Enable Denoising', 'type': 'bool', 'value': False, 'key': 'enable_denoising'},
+                    {'name': 'Butterworth Min λ (µm)', 'type': 'float', 'value': 0.25, 'limits': (0.01, 100), 'step': 0.01, 'key': 'butterworth_min_wavelength'},
+                    {'name': 'Butterworth Max λ (µm)', 'type': 'float', 'value': 10.0, 'limits': (0.01, 100), 'step': 0.1, 'key': 'butterworth_max_wavelength'},
+                    {'name': 'Butterworth Order', 'type': 'int', 'value': 5, 'limits': (1, 10), 'step': 1, 'key': 'butterworth_order'},
+                    {'name': 'Band Suppress Min λ (µm)', 'type': 'float', 'value': 0.167, 'limits': (0.01, 100), 'step': 0.001, 'key': 'band_suppress_min_wavelength'},
+                    {'name': 'Band Suppress Max λ (µm)', 'type': 'float', 'value': 1.0, 'limits': (0.01, 100), 'step': 0.01, 'key': 'band_suppress_max_wavelength'},
+                    {'name': 'Remove Start (%)', 'type': 'int', 'value': 10, 'limits': (0, 50), 'step': 1, 'key': 'denoise_remove_percent'},
+                    {'name': 'Remove End (%)', 'type': 'int', 'value': 10, 'limits': (0, 50), 'step': 1, 'key': 'denoise_remove_end_percent'},
+                    {'name': 'Use Interpolation', 'type': 'bool', 'value': True, 'key': 'denoise_interp'},
+                ]
+            },
+
         ]
         
         # Create parameter map for easy lookup
@@ -103,6 +125,12 @@ class ParameterTreeWidget(QWidget):
         self.parametersChanged.emit(params)
 
     def getCurrentParameters(self):
+        """Get current parameters with automatic wavelength to wavenumber conversion"""
+        
+        def wavelength_to_wavenumber(wavelength_um):
+            """Convert wavelength in micrometers to wavenumber in µm⁻¹"""
+            return 1.0 / wavelength_um
+        
         values = {}
         for key, param_def in self.param_map.items():
             # Navigate through the parameter tree structure
@@ -115,6 +143,34 @@ class ParameterTreeWidget(QWidget):
                     values[key] = val * 1e-6  # convert um to m
                 else:
                     values[key] = val
+        
+        # Convert individual wavelength parameters to array format for backward compatibility
+        if 'butterworth_min_wavelength' in values and 'butterworth_max_wavelength' in values:
+            wl_min = values['butterworth_min_wavelength']
+            wl_max = values['butterworth_max_wavelength']
+            # Convert wavelength ranges to wavenumber ranges
+            wn_low = wavelength_to_wavenumber(wl_max)   # Higher wavelength → lower wavenumber (W0)
+            wn_high = wavelength_to_wavenumber(wl_min)  # Lower wavelength → higher wavenumber (W1)
+            values['denoise_w0'] = wn_low  # Lower wavenumber
+            values['denoise_w1'] = wn_high  # Higher wavenumber
+            
+            # Also create the array format for compatibility
+            wavelength_ranges = [(wl_min, wl_max)]
+            values['butterworth_wavelengths'] = str(wavelength_ranges)
+        
+        if 'band_suppress_min_wavelength' in values and 'band_suppress_max_wavelength' in values:
+            wl_min = values['band_suppress_min_wavelength']
+            wl_max = values['band_suppress_max_wavelength']
+            # Convert wavelength ranges to wavenumber ranges for denoise_ranges
+            wn_low = wavelength_to_wavenumber(wl_max)   # Higher wavelength → lower wavenumber
+            wn_high = wavelength_to_wavenumber(wl_min)  # Lower wavelength → higher wavenumber
+            wavenumber_ranges = [(wn_low, wn_high)]
+            values['denoise_ranges'] = str(wavenumber_ranges)
+            
+            # Also create the array format for compatibility
+            wavelength_ranges = [(wl_min, wl_max)]
+            values['band_suppression_wavelengths'] = str(wavelength_ranges)
+        
         return values
 
     def _find_param_path(self, param_name):
@@ -140,7 +196,36 @@ class ParameterTreeWidget(QWidget):
             param = param.child(step)
         param.setValue(value)
 
+    def setParameterValue(self, key, value):
+        """Set a single parameter value by key"""
+        try:
+            if key in self.param_map:
+                param_name = self.param_map[key]['name']
+                param_path = self._find_param_path(param_name)
+                if param_path:
+                    val = value
+                    if key == 'pl_threshold':
+                        val = value / 1e-9  # convert N to nN for display
+                    elif key == 'pl_min_width_um':
+                        val = value / 1e-6  # convert m to um for display
+                    self._set_param_value(param_path, val)
+                    # Emit parameter change signal
+                    self.parametersChanged.emit(self.getCurrentParameters())
+                else:
+                    print(f"Warning: Could not find parameter path for {param_name}")
+            else:
+                print(f"Warning: Parameter key '{key}' not found in param_map")
+        except Exception as e:
+            print(f"Error setting parameter value for {key}: {e}")
+
     def setParameters(self, params):
+        """Set parameters with automatic wavenumber to wavelength conversion"""
+        
+        def wavenumber_to_wavelength(wavenumber_um_inv):
+            """Convert wavenumber in µm⁻¹ to wavelength in micrometers"""
+            return 1.0 / wavenumber_um_inv
+        
+        # Handle individual wavelength parameters first
         for key, value in params.items():
             if key in self.param_map:
                 param_name = self.param_map[key]['name']
@@ -152,6 +237,73 @@ class ParameterTreeWidget(QWidget):
                     elif key == 'pl_min_width_um':
                         val = value / 1e-6  # convert m to um
                     self._set_param_value(param_path, val)
+        
+        # Handle backward compatibility: convert old array format to individual parameters
+        if 'butterworth_wavelengths' in params and 'butterworth_min_wavelength' not in params:
+            try:
+                wavelength_ranges = ast.literal_eval(params['butterworth_wavelengths']) if isinstance(params['butterworth_wavelengths'], str) else params['butterworth_wavelengths']
+                if wavelength_ranges and len(wavelength_ranges[0]) == 2:
+                    wl_min, wl_max = wavelength_ranges[0]
+                    # Set individual parameters
+                    min_path = self._find_param_path('Butterworth Min λ (µm)')
+                    max_path = self._find_param_path('Butterworth Max λ (µm)')
+                    if min_path:
+                        self._set_param_value(min_path, wl_min)
+                    if max_path:
+                        self._set_param_value(max_path, wl_max)
+            except (ValueError, SyntaxError):
+                pass  # Skip if parsing fails
+        
+        if 'band_suppression_wavelengths' in params and 'band_suppress_min_wavelength' not in params:
+            try:
+                wavelength_ranges = ast.literal_eval(params['band_suppression_wavelengths']) if isinstance(params['band_suppression_wavelengths'], str) else params['band_suppression_wavelengths']
+                if wavelength_ranges and len(wavelength_ranges[0]) == 2:
+                    wl_min, wl_max = wavelength_ranges[0]
+                    # Set individual parameters
+                    min_path = self._find_param_path('Band Suppress Min λ (µm)')
+                    max_path = self._find_param_path('Band Suppress Max λ (µm)')
+                    if min_path:
+                        self._set_param_value(min_path, wl_min)
+                    if max_path:
+                        self._set_param_value(max_path, wl_max)
+            except (ValueError, SyntaxError):
+                pass  # Skip if parsing fails
+        
+        # Handle conversion from wavenumbers (w0, w1) to individual wavelength parameters
+        if 'denoise_w0' in params and 'denoise_w1' in params and 'butterworth_min_wavelength' not in params:
+            w0 = params['denoise_w0']  # smaller wavenumber -> larger wavelength
+            w1 = params['denoise_w1']  # larger wavenumber -> smaller wavelength
+            
+            # Convert back to wavelengths
+            wl_max = wavenumber_to_wavelength(w0)  # W0 -> max wavelength
+            wl_min = wavenumber_to_wavelength(w1)  # W1 -> min wavelength
+            
+            # Set individual parameters
+            min_path = self._find_param_path('Butterworth Min λ (µm)')
+            max_path = self._find_param_path('Butterworth Max λ (µm)')
+            if min_path:
+                self._set_param_value(min_path, wl_min)
+            if max_path:
+                self._set_param_value(max_path, wl_max)
+        
+        if 'denoise_ranges' in params and 'band_suppress_min_wavelength' not in params:
+            try:
+                wavenumber_ranges = ast.literal_eval(params['denoise_ranges']) if isinstance(params['denoise_ranges'], str) else params['denoise_ranges']
+                if wavenumber_ranges and len(wavenumber_ranges[0]) == 2:
+                    wn_low, wn_high = wavenumber_ranges[0]
+                    # Reverse the conversion: smaller wavenumber -> larger wavelength
+                    wl_max = wavenumber_to_wavelength(wn_low)  # Lower wavenumber → higher wavelength
+                    wl_min = wavenumber_to_wavelength(wn_high)   # Higher wavenumber → lower wavelength
+                    
+                    # Set individual parameters
+                    min_path = self._find_param_path('Band Suppress Min λ (µm)')
+                    max_path = self._find_param_path('Band Suppress Max λ (µm)')
+                    if min_path:
+                        self._set_param_value(min_path, wl_min)
+                    if max_path:
+                        self._set_param_value(max_path, wl_max)
+            except (ValueError, SyntaxError):
+                pass  # Skip if parsing fails
 
     def update_parameter_status(self, filename=None, is_file_specific=False):
         """Update the parameter status label"""

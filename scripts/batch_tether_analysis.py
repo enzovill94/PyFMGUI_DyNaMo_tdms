@@ -10,6 +10,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import json
 from pathlib import Path
 
 # Add the parent directory to the path to import tether_script
@@ -89,19 +90,14 @@ def run_batch_analysis(session_file, output_dir=None):
             # Get parameters for this file
             params = {}
             if 'file_parameters' in row and pd.notna(row['file_parameters']):
-                import json
                 params = json.loads(row['file_parameters'])
-                print("  Using file-specific parameters")
+                print(f"  Using file-specific parameters: {len(params)} params")
+                print(f"    Key parameters: pl_threshold={params.get('pl_threshold', 'N/A')}, pl_min_width_um={params.get('pl_min_width_um', 'N/A')}")
             else:
-                # Use global parameters from the row
-                param_columns = ['window_size', 'jump_threshold', 'min_plateau_length', 
-                               'derivative_threshold', 'max_outliers']
-                for col in param_columns:
-                    if col in row and pd.notna(row[col]):
-                        params[col] = row[col]
-                print("  Using global parameters")
+                print("  Using default parameters (no file-specific params found)")
             
             # Process the file
+            print(f"  Processing with params: {params}")
             result = process_single_file(file_path, params=params)
             
             if result:
@@ -187,7 +183,6 @@ def run_batch_analysis(session_file, output_dir=None):
                 # Get parameters for this file
                 params = {}
                 if 'file_parameters' in row and pd.notna(row['file_parameters']):
-                    import json
                     params = json.loads(row['file_parameters'])
                 
                 # Get plateau selections for this file
@@ -287,8 +282,9 @@ def run_batch_analysis(session_file, output_dir=None):
 def main():
     """Main function for command line usage"""
         # Option 1: Fixed path
-    session_file = "/Users/evillz/Data/article/2025_07_01_THP1_phd/sessions/latest/test/tether_session_20250716_192549.csv"
-
+    # session_file = "/Users/evillz/Data/article/2025_07_01_THP1_phd/sessions/latest/test/tether_session_20250716_192549.csv"
+    session_file = "/Users/evillz/Data/article/2025_07_01_THP1_phd/sessions/velocity_normalized_thp1_cell1/tether_session_20250805_225739_new_1.csv"
+    session_file = '/Users/evillz/Data/article/2025_07_01_THP1_phd/sessions/velocity_normalized_thp1_cell1/tether_session_20250805_131220_all.csv'
     # # Option 2: Interactive prompt
     # session_file = input("Enter path to session CSV file: ")
 
