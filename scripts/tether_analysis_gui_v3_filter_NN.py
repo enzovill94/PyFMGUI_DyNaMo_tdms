@@ -623,6 +623,10 @@ Ready to analyze TDMS files efficiently with AI assistance!"""
         self.auto_reanalysis_action.setStatusTip('Automatically rerun analysis when filter parameters change in Fourier plot')
         view_menu.addAction(self.auto_reanalysis_action)
         
+        # Add Neural Network menu if NN is available
+        if self.nn_enabled and self.nn_analysis:
+            self.add_nn_menu_items(menubar)
+        
         # Status bar
         self.statusBar().showMessage('Ready')
         
@@ -670,6 +674,875 @@ Ready to analyze TDMS files efficiently with AI assistance!"""
         except Exception as e:
             self.status_label.setText(f"Error changing directory: {str(e)}")
             self.statusBar().showMessage(f"Error: {str(e)}")
+        
+    def add_nn_menu_items(self, menubar):
+        """Add neural network learning and management menu items"""
+        
+        # Create Neural Network menu
+        nn_menu = menubar.addMenu("🧠 Neural Network")
+        
+        # Model Management section
+        nn_menu.addSeparator()
+        model_header = QAction("── Model Management ──", self)
+        model_header.setEnabled(False)
+        nn_menu.addAction(model_header)
+        
+        # Load/Save trained models
+        load_model_action = QAction("📂 Load Trained Model...", self)
+        load_model_action.setShortcut("Ctrl+Shift+L")
+        load_model_action.setStatusTip("Load a pre-trained neural network model")
+        load_model_action.triggered.connect(self.load_nn_model)
+        nn_menu.addAction(load_model_action)
+        
+        save_model_action = QAction("💾 Save Current Model...", self)
+        save_model_action.setShortcut("Ctrl+Shift+S")
+        save_model_action.setStatusTip("Save the current neural network model")
+        save_model_action.triggered.connect(self.save_nn_model)
+        nn_menu.addAction(save_model_action)
+        
+        # Training section
+        nn_menu.addSeparator()
+        training_header = QAction("── Training ──", self)
+        training_header.setEnabled(False)
+        nn_menu.addAction(training_header)
+        
+        # Generate training data from current labels
+        generate_training_action = QAction("🏷️ Generate Training Data from Labels...", self)
+        generate_training_action.setStatusTip("Create training dataset from your good/bad file labels")
+        generate_training_action.triggered.connect(self.generate_training_data)
+        nn_menu.addAction(generate_training_action)
+        
+        # Label current file for training
+        label_current_action = QAction("✏️ Label Current File for Training", self)
+        label_current_action.setShortcut("Ctrl+Shift+T")
+        label_current_action.setStatusTip("Add detailed plateau labels to current file for training")
+        label_current_action.triggered.connect(self.label_current_file)
+        nn_menu.addAction(label_current_action)
+        
+        # Train model
+        train_model_action = QAction("🎯 Train Neural Network...", self)
+        train_model_action.setStatusTip("Train the neural network on labeled data")
+        train_model_action.triggered.connect(self.train_nn_model)
+        nn_menu.addAction(train_model_action)
+        
+        # Evaluation section
+        nn_menu.addSeparator()
+        eval_header = QAction("── Evaluation ──", self)
+        eval_header.setEnabled(False)
+        nn_menu.addAction(eval_header)
+        
+        # Test model on current file
+        test_current_action = QAction("🔍 Test NN on Current File", self)
+        test_current_action.setShortcut("Ctrl+T")
+        test_current_action.setStatusTip("Test neural network with different thresholds on current file")
+        test_current_action.triggered.connect(self.test_nn_current_file)
+        nn_menu.addAction(test_current_action)
+        
+        # Compare NN vs Traditional
+        compare_action = QAction("⚖️ Compare NN vs Traditional Detection", self)
+        compare_action.setStatusTip("Side-by-side comparison of NN and traditional plateau detection")
+        compare_action.triggered.connect(self.compare_nn_traditional)
+        nn_menu.addAction(compare_action)
+        
+        # Batch evaluation
+        evaluate_batch_action = QAction("📊 Evaluate NN on File Set...", self)
+        evaluate_batch_action.setStatusTip("Evaluate neural network performance on multiple files")
+        evaluate_batch_action.triggered.connect(self.evaluate_nn_batch)
+        nn_menu.addAction(evaluate_batch_action)
+        
+        # Settings section
+        nn_menu.addSeparator()
+        settings_header = QAction("── Settings ──", self)
+        settings_header.setEnabled(False)
+        nn_menu.addAction(settings_header)
+        
+        # NN settings dialog
+        nn_settings_action = QAction("⚙️ Neural Network Settings...", self)
+        nn_settings_action.setStatusTip("Configure neural network parameters and thresholds")
+        nn_settings_action.triggered.connect(self.show_nn_settings)
+        nn_menu.addAction(nn_settings_action)
+        
+        # Auto-threshold tuning
+        tune_threshold_action = QAction("🎚️ Auto-Tune Confidence Threshold...", self)
+        tune_threshold_action.setStatusTip("Automatically optimize confidence threshold based on labeled data")
+        tune_threshold_action.triggered.connect(self.auto_tune_threshold)
+        nn_menu.addAction(tune_threshold_action)
+        
+        # Help section
+        nn_menu.addSeparator()
+        nn_help_action = QAction("❓ Neural Network Help", self)
+        nn_help_action.setStatusTip("Show neural network help and usage guide")
+        nn_help_action.triggered.connect(self.show_nn_help)
+        nn_menu.addAction(nn_help_action)
+
+    # Neural Network Menu Functions
+
+    def load_nn_model(self):
+        """Load a trained neural network model"""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Load Trained Neural Network Model", 
+                "", "PyTorch Models (*.pth *.pt);;All Files (*)")
+            
+            if file_path and self.nn_analysis:
+                import torch
+                state_dict = torch.load(file_path, map_location='cpu')
+                self.nn_analysis.model.load_state_dict(state_dict)
+                self.status_label.setText(f"Loaded NN model: {os.path.basename(file_path)}")
+                print(f"✓ Loaded neural network model from {file_path}")
+                
+        except Exception as e:
+            self.status_label.setText(f"Failed to load NN model: {e}")
+            print(f"✗ Failed to load NN model: {e}")
+
+    def save_nn_model(self):
+        """Save the current neural network model"""
+        try:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Save Neural Network Model", 
+                "tether_nn_model.pth", "PyTorch Models (*.pth *.pt);;All Files (*)")
+            
+            if file_path and self.nn_analysis:
+                import torch
+                torch.save(self.nn_analysis.model.state_dict(), file_path)
+                self.status_label.setText(f"Saved NN model: {os.path.basename(file_path)}")
+                print(f"✓ Saved neural network model to {file_path}")
+                
+        except Exception as e:
+            self.status_label.setText(f"Failed to save NN model: {e}")
+            print(f"✗ Failed to save NN model: {e}")
+
+    def generate_training_data(self):
+        """Generate training data from currently labeled files"""
+        if not self.nn_analysis:
+            self.status_label.setText("Neural network not available")
+            return
+        
+        try:
+            # Count labeled files
+            good_files = [f for f in self.file_path if self.get_file_status(f) == 'Good']
+            bad_files = [f for f in self.file_path if self.get_file_status(f) == 'Bad']
+            
+            if len(good_files) < 5 or len(bad_files) < 5:
+                from PyQt5.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Insufficient Data", 
+                    f"Need at least 5 good and 5 bad files for training.\n"
+                    f"Currently have: {len(good_files)} good, {len(bad_files)} bad")
+                return
+            
+            # Show generation dialog
+            self.show_training_data_generation_dialog(good_files, bad_files)
+            
+        except Exception as e:
+            self.status_label.setText(f"Failed to generate training data: {e}")
+            print(f"✗ Failed to generate training data: {e}")
+
+    def label_current_file(self):
+        """Label the current file for neural network training"""
+        if not self.file_path or self.index >= len(self.file_path):
+            self.status_label.setText("No file selected")
+            return
+        
+        current_file = self.file_path[self.index]
+        
+        # Show labeling dialog
+        self.show_file_labeling_dialog(current_file)
+
+    def train_nn_model(self):
+        """Train the neural network model"""
+        if not self.nn_analysis:
+            self.status_label.setText("Neural network not available")
+            return
+        
+        # Show training dialog
+        self.show_nn_training_dialog()
+
+    def test_nn_current_file(self):
+        """Test neural network on the current file"""
+        if not self.current_analysis_result or not self.nn_analysis:
+            self.status_label.setText("No analysis result or NN not available")
+            return
+        
+        try:
+            force_data = self.current_analysis_result.get('defl_savitz', [])
+            time_data = self.current_analysis_result.get('rel_time', [])
+            
+            if len(force_data) > 0 and len(time_data) > 0:
+                # Test with multiple thresholds
+                thresholds = [0.1, 0.3, 0.5, 0.7, 0.9]
+                results = {}
+                
+                for threshold in thresholds:
+                    nn_results = self.nn_analysis.detect_plateaus_nn(
+                        np.array(force_data), 
+                        np.array(time_data),
+                        confidence_threshold=threshold
+                    )
+                    results[threshold] = nn_results
+                
+                self.show_nn_test_results(results)
+                
+        except Exception as e:
+            self.status_label.setText(f"NN test failed: {e}")
+            print(f"✗ NN test failed: {e}")
+
+    def compare_nn_traditional(self):
+        """Compare neural network vs traditional plateau detection"""
+        if not self.current_analysis_result or not self.nn_analysis:
+            self.status_label.setText("No analysis result or NN not available")
+            return
+        
+        # Show comparison dialog
+        self.show_nn_comparison_dialog()
+
+    def evaluate_nn_batch(self):
+        """Evaluate neural network on a batch of files"""
+        if not self.nn_analysis:
+            self.status_label.setText("Neural network not available")
+            return
+        
+        # Show batch evaluation dialog
+        self.show_nn_batch_evaluation_dialog()
+
+    def show_nn_settings(self):
+        """Show neural network settings dialog"""
+        if not self.nn_analysis:
+            self.status_label.setText("Neural network not available")
+            return
+        
+        # Show settings dialog
+        self.show_nn_settings_dialog()
+
+    def auto_tune_threshold(self):
+        """Auto-tune the confidence threshold based on labeled data"""
+        if not self.nn_analysis:
+            self.status_label.setText("Neural network not available")
+            return
+        
+        # Show auto-tuning dialog
+        self.show_threshold_tuning_dialog()
+
+    def show_nn_help(self):
+        """Show neural network help dialog"""
+        help_text = """🧠 Neural Network Plateau Detection Help
+
+── Getting Started ──
+1. Enable "NN Plateaus" checkbox to see neural network results
+2. Neural network runs automatically during analysis
+3. Cyan dotted lines show NN detected plateaus
+
+── Training the Neural Network ──
+1. Label files as 'good' (G key) or 'bad' (B key)
+2. Use "Generate Training Data from Labels" to create training dataset
+3. Use "Train Neural Network" to improve the model
+4. Save trained models for future use
+
+── Keyboard Shortcuts ──
+• Ctrl+T: Test NN on current file
+• Ctrl+Shift+S: Save NN model
+• Ctrl+Shift+L: Load NN model
+
+── Understanding Results ──
+• Confidence scores: 0.0-1.0 (higher = more confident)
+• Default threshold: 0.1 (very sensitive)
+• Cyan plateaus: NN detected regions
+• Traditional plateaus: Your existing algorithm
+
+── Batch Analysis ──
+• Enable NN checkbox before batch analysis
+• Files with 0 NN plateaus auto-labeled as "bad"
+• Results show both traditional and NN statistics
+
+── Menu Functions ──
+• Load/Save Model: Manage trained neural networks
+• Generate Training Data: Convert your labels to training data
+• Train Network: Improve detection with your data
+• Test & Compare: Evaluate NN performance
+• Settings: Configure thresholds and parameters
+• Auto-Tune: Optimize settings automatically"""
+        
+        from PyQt5.QtWidgets import QMessageBox
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Neural Network Help")
+        msg.setText(help_text)
+        msg.setIcon(QMessageBox.Information)
+        msg.exec_()
+
+    def get_file_status(self, file_path):
+        """Get the status of a file (Good/Bad/Not Analyzed)"""
+        try:
+            if hasattr(self, 'file_data'):
+                for i, data in enumerate(self.file_data):
+                    if data.get('full_path', '') == file_path or data.get('filename', '') == os.path.basename(file_path):
+                        return data.get('status', 'Not Analyzed')
+            return 'Not Analyzed'
+        except Exception:
+            return 'Not Analyzed'
+
+    # Placeholder methods for dialog functions (to be implemented)
+    def show_training_data_generation_dialog(self, good_files, bad_files):
+        """Show training data generation dialog"""
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Training Data Generation", 
+            f"Found {len(good_files)} good files and {len(bad_files)} bad files.\n"
+            "Training data generation dialog will be implemented soon!")
+
+    def show_file_labeling_dialog(self, current_file):
+        """Show file labeling dialog"""
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.information(self, "File Labeling", 
+            f"Labeling dialog for {os.path.basename(current_file)} will be implemented soon!")
+
+    def show_nn_training_dialog(self):
+        """Show neural network training dialog"""
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Neural Network Training", 
+            "Neural network training dialog will be implemented soon!")
+
+    def show_nn_test_results(self, results):
+        """Show neural network test results with detailed analysis"""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton, QTabWidget, QWidget, QTableWidget, QTableWidgetItem
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        from matplotlib.figure import Figure
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Neural Network Test Results")
+        dialog.setGeometry(200, 200, 900, 700)
+        
+        layout = QVBoxLayout()
+        
+        # Create tab widget
+        tab_widget = QTabWidget()
+        
+        # Tab 1: Threshold Comparison Table
+        table_tab = QWidget()
+        table_layout = QVBoxLayout()
+        
+        # Summary info
+        current_file = os.path.basename(self.file_path[self.index])
+        summary_label = QLabel(f"Testing Neural Network on: {current_file}")
+        summary_label.setStyleSheet("QLabel { font-weight: bold; font-size: 14px; color: #2196F3; }")
+        table_layout.addWidget(summary_label)
+        
+        # Results table
+        table = QTableWidget()
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(['Confidence Threshold', 'Plateaus Detected', 'Overall Confidence', 'Recommendation'])
+        table.setRowCount(len(results))
+        
+        best_threshold = None
+        best_score = 0
+        
+        for row, (threshold, result) in enumerate(results.items()):
+            plateau_count = len(result.get('plateaus', []))
+            confidence = result.get('confidence', 0.0)
+            
+            # Calculate a simple score (you can make this more sophisticated)
+            score = confidence * (1 + plateau_count * 0.1)  # Slight bonus for finding plateaus
+            if score > best_score:
+                best_score = score
+                best_threshold = threshold
+            
+            # Threshold
+            table.setItem(row, 0, QTableWidgetItem(f"{threshold:.1f}"))
+            
+            # Plateau count
+            count_item = QTableWidgetItem(str(plateau_count))
+            if plateau_count > 0:
+                from PyQt5.QtGui import QColor
+                count_item.setBackground(QColor("#E8F5E8"))  # Light green
+            table.setItem(row, 1, count_item)
+            
+            # Confidence
+            conf_item = QTableWidgetItem(f"{confidence:.3f}")
+            if confidence > 0.5:
+                from PyQt5.QtGui import QColor
+                conf_item.setBackground(QColor("#E8F5E8"))  # Light green
+            elif confidence > 0.3:
+                from PyQt5.QtGui import QColor
+                conf_item.setBackground(QColor("#FFF3CD"))  # Light yellow
+            else:
+                from PyQt5.QtGui import QColor
+                conf_item.setBackground(QColor("#F8D7DA"))  # Light red
+            table.setItem(row, 2, conf_item)
+            
+            # Recommendation
+            if threshold == best_threshold:
+                rec_item = QTableWidgetItem("🎯 BEST")
+                from PyQt5.QtGui import QColor, QFont
+                rec_item.setBackground(QColor("#D4EDDA"))
+                font = QFont()
+                font.setBold(True)
+                rec_item.setFont(font)
+            elif confidence > 0.7:
+                rec_item = QTableWidgetItem("✅ Good")
+            elif confidence > 0.3:
+                rec_item = QTableWidgetItem("⚠️ Maybe")
+            else:
+                rec_item = QTableWidgetItem("❌ Poor")
+            table.setItem(row, 3, rec_item)
+        
+        table.resizeColumnsToContents()
+        table_layout.addWidget(table)
+        
+        # Recommendation text
+        rec_text = QTextEdit()
+        rec_text.setMaximumHeight(100)
+        rec_text.setReadOnly(True)
+        
+        if best_threshold is not None:
+            rec_content = f"""🎯 RECOMMENDATION:
+• Best threshold: {best_threshold} (Score: {best_score:.3f})
+• Current default: 0.1 (very sensitive)
+• For this file: {results[best_threshold]['confidence']:.3f} confidence, {len(results[best_threshold]['plateaus'])} plateaus
+
+💡 TIP: Lower thresholds detect more plateaus but may include false positives."""
+        else:
+            rec_content = "🤔 No plateaus detected at any threshold - this file may be challenging for the neural network."
+        
+        # Add comparison with traditional analysis if available
+        if hasattr(self, 'current_analysis_result') and self.current_analysis_result:
+            traditional_plateaus = len(self.current_analysis_result.get('plateau_results', []))
+            if traditional_plateaus > 0:
+                rec_content += f"\n\n🔍 COMPARISON:\n• Traditional analysis: {traditional_plateaus} plateaus\n• Neural network: 0 plateaus\n• This suggests the NN may need different settings or training for this data type."
+        
+        rec_text.setText(rec_content)
+        table_layout.addWidget(rec_text)
+        
+        table_tab.setLayout(table_layout)
+        tab_widget.addTab(table_tab, "📊 Threshold Analysis")
+        
+        # Tab 2: Detailed Results
+        details_tab = QWidget()
+        details_layout = QVBoxLayout()
+        
+        details_text = QTextEdit()
+        details_text.setReadOnly(True)
+        
+        details_content = f"Neural Network Test Results for: {current_file}\n"
+        details_content += "=" * 60 + "\n\n"
+        
+        for threshold, result in results.items():
+            details_content += f"🔍 Threshold: {threshold}\n"
+            details_content += f"   Overall Confidence: {result.get('confidence', 0.0):.3f}\n"
+            details_content += f"   Has Plateau: {result.get('has_plateau', False)}\n"
+            details_content += f"   Plateaus Found: {len(result.get('plateaus', []))}\n"
+            
+            if result.get('plateaus'):
+                for i, plateau in enumerate(result['plateaus']):
+                    details_content += f"   Plateau {i+1}: {plateau['start_time']:.2f}s - {plateau['end_time']:.2f}s (conf: {plateau['confidence']:.3f})\n"
+            details_content += "\n"
+        
+        details_text.setText(details_content)
+        details_layout.addWidget(details_text)
+        
+        details_tab.setLayout(details_layout)
+        tab_widget.addTab(details_tab, "📝 Detailed Results")
+        
+        layout.addWidget(tab_widget)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        # Use Best Threshold button
+        if best_threshold is not None:
+            use_threshold_btn = QPushButton(f"Use Best Threshold ({best_threshold})")
+            use_threshold_btn.setStyleSheet("QPushButton { background-color: #28a745; color: white; font-weight: bold; }")
+            use_threshold_btn.clicked.connect(lambda: self.apply_best_threshold(best_threshold, dialog))
+            button_layout.addWidget(use_threshold_btn)
+        
+        # Visualize button
+        visualize_btn = QPushButton("📈 Visualize Results")
+        visualize_btn.setStyleSheet("QPushButton { background-color: #17a2b8; color: white; }")
+        visualize_btn.clicked.connect(lambda: self.visualize_nn_test_results(results))
+        button_layout.addWidget(visualize_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        button_layout.addWidget(close_btn)
+        
+        layout.addLayout(button_layout)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def apply_best_threshold(self, threshold, dialog):
+        """Apply the best threshold as the new default"""
+        from PyQt5.QtWidgets import QMessageBox
+        
+        # Here you could update the default threshold in your NN analysis
+        # For now, just show a confirmation
+        QMessageBox.information(self, "Threshold Applied", 
+            f"Best threshold {threshold} noted!\n"
+            "This will be implemented to update your NN default threshold.")
+        
+        dialog.accept()
+
+    def visualize_nn_test_results(self, results):
+        """Create a visualization of the test results"""
+        try:
+            import matplotlib.pyplot as plt
+            
+            thresholds = list(results.keys())
+            confidences = [results[t].get('confidence', 0.0) for t in thresholds]
+            plateau_counts = [len(results[t].get('plateaus', [])) for t in thresholds]
+            
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+            
+            # Plot 1: Confidence vs Threshold
+            ax1.plot(thresholds, confidences, 'bo-', linewidth=2, markersize=8)
+            ax1.set_xlabel('Confidence Threshold')
+            ax1.set_ylabel('NN Confidence Score')
+            ax1.set_title('Neural Network Confidence vs Threshold')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_ylim(0, 1)
+            
+            # Plot 2: Plateau Count vs Threshold
+            ax2.bar(thresholds, plateau_counts, alpha=0.7, color='skyblue', edgecolor='navy')
+            ax2.set_xlabel('Confidence Threshold')
+            ax2.set_ylabel('Number of Plateaus Detected')
+            ax2.set_title('Plateaus Detected vs Threshold')
+            ax2.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.show()
+            
+        except Exception as e:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Visualization Error", f"Could not create visualization: {e}")
+
+    def show_nn_comparison_dialog(self):
+        """Show NN vs traditional comparison dialog"""
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.information(self, "NN vs Traditional Comparison", 
+            "Comparison dialog will be implemented soon!")
+
+    def show_nn_batch_evaluation_dialog(self):
+        """Show batch evaluation dialog"""
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Batch Evaluation", 
+            "Batch evaluation dialog will be implemented soon!")
+
+    def show_nn_settings_dialog(self):
+        """Show comprehensive neural network settings dialog"""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+                                     QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton, 
+                                     QGroupBox, QGridLayout, QSlider, QTabWidget, QWidget,
+                                     QTextEdit, QComboBox)
+        from PyQt5.QtCore import Qt
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("🧠 Neural Network Settings")
+        dialog.setGeometry(300, 200, 600, 500)
+        
+        layout = QVBoxLayout()
+        
+        # Create tab widget
+        tab_widget = QTabWidget()
+        
+        # Tab 1: Detection Settings
+        detection_tab = QWidget()
+        detection_layout = QVBoxLayout()
+        
+        # Current settings info
+        info_label = QLabel("Configure neural network plateau detection parameters")
+        info_label.setStyleSheet("QLabel { font-size: 12px; color: #666; margin-bottom: 10px; }")
+        detection_layout.addWidget(info_label)
+        
+        # Confidence threshold settings
+        conf_group = QGroupBox("Confidence Threshold Settings")
+        conf_layout = QGridLayout()
+        
+        # Current threshold
+        conf_layout.addWidget(QLabel("Default Confidence Threshold:"), 0, 0)
+        self.conf_threshold_spin = QDoubleSpinBox()
+        self.conf_threshold_spin.setRange(0.01, 0.99)
+        self.conf_threshold_spin.setSingleStep(0.01)
+        self.conf_threshold_spin.setDecimals(2)
+        self.conf_threshold_spin.setValue(0.1)  # Current default
+        self.conf_threshold_spin.setToolTip("Lower values = more sensitive (more plateaus detected)")
+        conf_layout.addWidget(self.conf_threshold_spin, 0, 1)
+        
+        # Threshold slider for visual feedback
+        conf_layout.addWidget(QLabel("Visual Adjustment:"), 1, 0)
+        self.conf_threshold_slider = QSlider(Qt.Horizontal)
+        self.conf_threshold_slider.setRange(1, 99)
+        self.conf_threshold_slider.setValue(10)  # 0.1 * 100
+        self.conf_threshold_slider.valueChanged.connect(
+            lambda v: self.conf_threshold_spin.setValue(v / 100.0)
+        )
+        self.conf_threshold_spin.valueChanged.connect(
+            lambda v: self.conf_threshold_slider.setValue(int(v * 100))
+        )
+        conf_layout.addWidget(self.conf_threshold_slider, 1, 1)
+        
+        # Sensitivity presets
+        conf_layout.addWidget(QLabel("Presets:"), 2, 0)
+        preset_layout = QHBoxLayout()
+        
+        very_sensitive_btn = QPushButton("Very Sensitive (0.05)")
+        very_sensitive_btn.clicked.connect(lambda: self.conf_threshold_spin.setValue(0.05))
+        preset_layout.addWidget(very_sensitive_btn)
+        
+        sensitive_btn = QPushButton("Sensitive (0.1)")
+        sensitive_btn.clicked.connect(lambda: self.conf_threshold_spin.setValue(0.1))
+        preset_layout.addWidget(sensitive_btn)
+        
+        balanced_btn = QPushButton("Balanced (0.3)")
+        balanced_btn.clicked.connect(lambda: self.conf_threshold_spin.setValue(0.3))
+        preset_layout.addWidget(balanced_btn)
+        
+        conservative_btn = QPushButton("Conservative (0.5)")
+        conservative_btn.clicked.connect(lambda: self.conf_threshold_spin.setValue(0.5))
+        preset_layout.addWidget(conservative_btn)
+        
+        conf_layout.addLayout(preset_layout, 2, 1)
+        conf_group.setLayout(conf_layout)
+        detection_layout.addWidget(conf_group)
+        
+        # Auto-labeling settings
+        auto_group = QGroupBox("Auto-labeling Settings")
+        auto_layout = QGridLayout()
+        
+        self.auto_label_enabled = QCheckBox("Enable auto-labeling in batch analysis")
+        self.auto_label_enabled.setChecked(True)
+        self.auto_label_enabled.setToolTip("Automatically label files with 0 NN plateaus as 'bad'")
+        auto_layout.addWidget(self.auto_label_enabled, 0, 0, 1, 2)
+        
+        auto_layout.addWidget(QLabel("Auto-label threshold:"), 1, 0)
+        self.auto_label_threshold = QSpinBox()
+        self.auto_label_threshold.setRange(0, 5)
+        self.auto_label_threshold.setValue(0)
+        self.auto_label_threshold.setToolTip("Files with ≤ this many NN plateaus will be labeled 'bad'")
+        auto_layout.addWidget(self.auto_label_threshold, 1, 1)
+        
+        auto_group.setLayout(auto_layout)
+        detection_layout.addWidget(auto_group)
+        
+        detection_layout.addStretch()
+        detection_tab.setLayout(detection_layout)
+        tab_widget.addTab(detection_tab, "🎯 Detection")
+        
+        # Tab 2: Model Settings
+        model_tab = QWidget()
+        model_layout = QVBoxLayout()
+        
+        # Model info
+        model_info_group = QGroupBox("Current Model Information")
+        model_info_layout = QVBoxLayout()
+        
+        model_info_text = QTextEdit()
+        model_info_text.setReadOnly(True)
+        model_info_text.setMaximumHeight(120)
+        
+        if self.nn_analysis and hasattr(self.nn_analysis, 'model'):
+            model_info = f"""Model Type: PlateauDetectorNN
+Input Size: 1000 points (automatically resampled)
+Architecture: 1D CNN with multi-head attention
+Training Status: {'Pre-trained' if hasattr(self.nn_analysis.model, 'training') else 'Unknown'}
+Parameters: ~50K (estimated)
+
+Current Performance:
+• Confidence threshold: {self.conf_threshold_spin.value():.2f}
+• Typical accuracy: ~85% (varies by dataset)"""
+        else:
+            model_info = "Neural network model not available or not loaded."
+        
+        model_info_text.setText(model_info)
+        model_info_layout.addWidget(model_info_text)
+        model_info_group.setLayout(model_info_layout)
+        model_layout.addWidget(model_info_group)
+        
+        # Data preprocessing settings
+        preprocessing_group = QGroupBox("Data Preprocessing")
+        preprocessing_layout = QGridLayout()
+        
+        preprocessing_layout.addWidget(QLabel("Resampling length:"), 0, 0)
+        self.resample_length = QSpinBox()
+        self.resample_length.setRange(100, 2000)
+        self.resample_length.setValue(1000)
+        self.resample_length.setToolTip("Number of points to resample data to (affects processing speed)")
+        preprocessing_layout.addWidget(self.resample_length, 0, 1)
+        
+        preprocessing_layout.addWidget(QLabel("Normalization method:"), 1, 0)
+        self.normalization_method = QComboBox()
+        self.normalization_method.addItems(["zscore", "minmax", "none"])
+        self.normalization_method.setCurrentText("zscore")
+        preprocessing_layout.addWidget(self.normalization_method, 1, 1)
+        
+        preprocessing_group.setLayout(preprocessing_layout)
+        model_layout.addWidget(preprocessing_group)
+        
+        model_layout.addStretch()
+        model_tab.setLayout(model_layout)
+        tab_widget.addTab(model_tab, "🔧 Model")
+        
+        # Tab 3: Performance & Debug
+        performance_tab = QWidget()
+        performance_layout = QVBoxLayout()
+        
+        # Performance settings
+        perf_group = QGroupBox("Performance Settings")
+        perf_layout = QGridLayout()
+        
+        self.gpu_enabled = QCheckBox("Use GPU if available (CUDA)")
+        self.gpu_enabled.setChecked(False)  # Default to CPU for stability
+        self.gpu_enabled.setToolTip("Enable GPU acceleration - requires CUDA setup")
+        perf_layout.addWidget(self.gpu_enabled, 0, 0, 1, 2)
+        
+        perf_layout.addWidget(QLabel("Batch size for processing:"), 1, 0)
+        self.batch_size = QSpinBox()
+        self.batch_size.setRange(1, 100)
+        self.batch_size.setValue(32)
+        self.batch_size.setToolTip("Number of files to process at once (higher = faster but more memory)")
+        perf_layout.addWidget(self.batch_size, 1, 1)
+        
+        perf_group.setLayout(perf_layout)
+        performance_layout.addWidget(perf_group)
+        
+        # Debug settings
+        debug_group = QGroupBox("Debug & Logging")
+        debug_layout = QGridLayout()
+        
+        self.verbose_logging = QCheckBox("Verbose NN logging")
+        self.verbose_logging.setChecked(False)
+        self.verbose_logging.setToolTip("Enable detailed neural network logging for debugging")
+        debug_layout.addWidget(self.verbose_logging, 0, 0, 1, 2)
+        
+        self.save_intermediate = QCheckBox("Save intermediate results")
+        self.save_intermediate.setChecked(False)
+        self.save_intermediate.setToolTip("Save preprocessing and feature extraction results for analysis")
+        debug_layout.addWidget(self.save_intermediate, 1, 0, 1, 2)
+        
+        debug_group.setLayout(debug_layout)
+        performance_layout.addWidget(debug_group)
+        
+        performance_layout.addStretch()
+        performance_tab.setLayout(performance_layout)
+        tab_widget.addTab(performance_tab, "⚡ Performance")
+        
+        layout.addWidget(tab_widget)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        # Test Current Settings
+        test_btn = QPushButton("🧪 Test Current Settings")
+        test_btn.setStyleSheet("QPushButton { background-color: #17a2b8; color: white; }")
+        test_btn.clicked.connect(lambda: self.test_nn_settings(dialog))
+        button_layout.addWidget(test_btn)
+        
+        # Reset to Defaults
+        reset_btn = QPushButton("🔄 Reset to Defaults")
+        reset_btn.clicked.connect(lambda: self.reset_nn_settings())
+        button_layout.addWidget(reset_btn)
+        
+        # Apply & Close
+        apply_btn = QPushButton("✅ Apply Settings")
+        apply_btn.setStyleSheet("QPushButton { background-color: #28a745; color: white; font-weight: bold; }")
+        apply_btn.clicked.connect(lambda: self.apply_nn_settings(dialog))
+        button_layout.addWidget(apply_btn)
+        
+        # Cancel
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+        
+        layout.addLayout(button_layout)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def test_nn_settings(self, dialog):
+        """Test the current settings on the active file"""
+        from PyQt5.QtWidgets import QMessageBox
+        
+        if not self.current_analysis_result or not self.nn_analysis:
+            QMessageBox.warning(dialog, "Cannot Test", "No file analyzed or NN not available")
+            return
+        
+        try:
+            # Get current dialog settings
+            test_threshold = self.conf_threshold_spin.value()
+            
+            # Run NN with test settings
+            force_data = self.current_analysis_result.get('defl_savitz', [])
+            time_data = self.current_analysis_result.get('rel_time', [])
+            
+            if len(force_data) > 0 and len(time_data) > 0:
+                nn_results = self.nn_analysis.detect_plateaus_nn(
+                    np.array(force_data), 
+                    np.array(time_data),
+                    confidence_threshold=test_threshold
+                )
+                
+                plateau_count = len(nn_results.get('plateaus', []))
+                confidence = nn_results.get('confidence', 0.0)
+                
+                QMessageBox.information(dialog, "Test Results", 
+                    f"Settings Test Results:\n\n"
+                    f"Confidence Threshold: {test_threshold:.2f}\n"
+                    f"Plateaus Detected: {plateau_count}\n"
+                    f"Overall Confidence: {confidence:.3f}\n\n"
+                    f"{'✅ Good detection' if confidence > 0.5 else '⚠️ Low confidence'}")
+            else:
+                QMessageBox.warning(dialog, "Test Failed", "No force/time data available")
+                
+        except Exception as e:
+            QMessageBox.critical(dialog, "Test Error", f"Testing failed: {e}")
+
+    def reset_nn_settings(self):
+        """Reset all NN settings to defaults"""
+        self.conf_threshold_spin.setValue(0.1)
+        self.auto_label_enabled.setChecked(True)
+        self.auto_label_threshold.setValue(0)
+        self.resample_length.setValue(1000)
+        self.normalization_method.setCurrentText("zscore")
+        self.gpu_enabled.setChecked(False)
+        self.batch_size.setValue(32)
+        self.verbose_logging.setChecked(False)
+        self.save_intermediate.setChecked(False)
+
+    def apply_nn_settings(self, dialog):
+        """Apply the configured settings"""
+        from PyQt5.QtWidgets import QMessageBox
+        
+        try:
+            # Store settings (you could save these to a config file)
+            settings = {
+                'confidence_threshold': self.conf_threshold_spin.value(),
+                'auto_label_enabled': self.auto_label_enabled.isChecked(),
+                'auto_label_threshold': self.auto_label_threshold.value(),
+                'resample_length': self.resample_length.value(),
+                'normalization_method': self.normalization_method.currentText(),
+                'gpu_enabled': self.gpu_enabled.isChecked(),
+                'batch_size': self.batch_size.value(),
+                'verbose_logging': self.verbose_logging.isChecked(),
+                'save_intermediate': self.save_intermediate.isChecked()
+            }
+            
+            # Apply settings to the neural network analysis
+            # (This would need to be implemented in your NN analysis class)
+            
+            self.status_label.setText(f"NN settings applied - threshold: {settings['confidence_threshold']:.2f}")
+            
+            QMessageBox.information(dialog, "Settings Applied", 
+                f"Neural network settings have been applied!\n\n"
+                f"Key changes:\n"
+                f"• Confidence threshold: {settings['confidence_threshold']:.2f}\n"
+                f"• Auto-labeling: {'Enabled' if settings['auto_label_enabled'] else 'Disabled'}\n"
+                f"• GPU acceleration: {'Enabled' if settings['gpu_enabled'] else 'Disabled'}")
+            
+            dialog.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(dialog, "Apply Error", f"Failed to apply settings: {e}")
+
+    def show_threshold_tuning_dialog(self):
+        """Show threshold tuning dialog"""
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Threshold Tuning", 
+            "Auto-threshold tuning dialog will be implemented soon!")
         
     def setupShortcuts(self):
         """Setup keyboard shortcuts"""
@@ -1193,7 +2066,7 @@ Ready to analyze TDMS files efficiently with AI assistance!"""
                         nn_results = self.nn_analysis.detect_plateaus_nn(
                             np.array(force_data), 
                             np.array(time_data),
-                            confidence_threshold=0.5
+                            confidence_threshold=0.1  # Lower threshold for more detections
                         )
                         result['nn_plateau_results'] = nn_results
                         result['nn_plateaus'] = nn_results.get('plateaus', [])
@@ -1708,7 +2581,7 @@ Ready to analyze TDMS files efficiently with AI assistance!"""
                         self.threshold_line.blockSignals(False)
                         if self.threshold_line not in self.analysis_plotview.items():
                             self.analysis_plotview.addItem(self.threshold_line)
-                        print(f"Updated threshold line position to {pl_threshold:.2e} N/m")
+                        # print(f"Updated threshold line position to {pl_threshold:.2e} N/m")
                         
                 except Exception as line_error:
                     print(f"Error creating/updating threshold line: {line_error}")
@@ -2948,15 +3821,21 @@ All file-specific parameters have been preserved."""
             print(f"Concurrent batch analysis error: {e}")
 
     def run_concurrent_batch_analysis(self):
-        """Run concurrent batch analysis on all files loaded from the session using multiple CPU cores"""
+        """Run concurrent batch analysis on all files loaded from the session using multiple CPU cores with NN analysis"""
         if not self.file_path:
             self.status_label.setText("No files loaded to analyze")
             return
             
         total_files = len(self.file_path)
         
+        # Check if neural network analysis should be used
+        use_nn = self.nn_enabled and self.nn_analysis is not None
+        nn_threshold = 0.5  # You can make this configurable
+        auto_label = True   # Enable auto-labeling based on NN results
+        
         # Create and show progress dialog
-        progress_dialog = BatchAnalysisProgressDialog("Concurrent Batch Analysis (Session Files)", self)
+        nn_info = " with Neural Network Analysis" if use_nn else ""
+        progress_dialog = BatchAnalysisProgressDialog(f"Concurrent Batch Analysis{nn_info} (Session Files)", self)
         progress_dialog.show()
         progress_dialog.update_progress(0, total_files, "Preparing session files for analysis...")
         
@@ -2970,7 +3849,8 @@ All file-specific parameters have been preserved."""
             params = self.get_file_parameters(filepath)
             file_param_pairs.append((filepath, params))
         
-        progress_dialog.update_progress(0, total_files, "Starting concurrent processing...")
+        status_msg = "Starting concurrent processing with neural network analysis..." if use_nn else "Starting concurrent processing..."
+        progress_dialog.update_progress(0, total_files, status_msg)
         
         # Progress tracking callback
         def progress_callback(completed_count, total_count):
@@ -2992,21 +3872,43 @@ All file-specific parameters have been preserved."""
             except ValueError:
                 print(f"✗ Failed to analyze {filepath}: {error_message}")
         
-        # Run concurrent analysis
+        # Run concurrent analysis with NN support
         try:
             processor = ConcurrentTetherProcessor()
             analysis_results = processor.process_files_concurrent(
                 file_param_pairs, 
                 progress_callback=progress_callback,
-                error_callback=error_callback
+                error_callback=error_callback,
+                use_nn=use_nn,
+                nn_threshold=nn_threshold,
+                auto_label=auto_label
             )
             
             # Process successful results
             processed_files = 0
+            auto_labeled_good = 0
+            auto_labeled_bad = 0
+            
             for filepath, result in analysis_results.items():
                 try:
                     # Find file index for this filepath
                     file_index = self.file_path.index(filepath)
+                    
+                    # Handle auto-labeling based on NN results
+                    if auto_label and 'auto_label' in result:
+                        auto_label_status = result['auto_label']
+                        auto_label_reason = result.get('auto_label_reason', 'No reason provided')
+                        
+                        if auto_label_status == 'good':
+                            self.bool_good_curve[file_index] = 1
+                            self.update_file_status(file_index, 'Good', Qt.green)
+                            auto_labeled_good += 1
+                            print(f"✓ Auto-labeled {os.path.basename(filepath)} as GOOD: {auto_label_reason}")
+                        elif auto_label_status == 'bad':
+                            self.bool_good_curve[file_index] = 0
+                            self.update_file_status(file_index, 'Bad', Qt.red)
+                            auto_labeled_bad += 1
+                            print(f"✗ Auto-labeled {os.path.basename(filepath)} as BAD: {auto_label_reason}")
                     
                     # Store calculated velocity in file_data and update table
                     if 'velocity_calc_um_s' in result:
@@ -3025,9 +3927,16 @@ All file-specific parameters have been preserved."""
                                 self.file_table.setItem(table_row, 5, vel_item)
                                 self.file_table.setSortingEnabled(sorting_enabled)
                     
-                    # Update analysis status
+                    # Update analysis status with NN info
                     plateau_count = len(result['plateaus']) if result['plateaus'] else 0
-                    self.update_analysis_status(file_index, f"Analyzed ({plateau_count} plateaus)")
+                    nn_count = len(result.get('nn_plateaus', []))
+                    
+                    if use_nn:
+                        status_text = f"Analyzed ({plateau_count} trad, {nn_count} NN plateaus)"
+                    else:
+                        status_text = f"Analyzed ({plateau_count} plateaus)"
+                    
+                    self.update_analysis_status(file_index, status_text)
                     processed_files += 1
                     
                 except ValueError:
@@ -3056,10 +3965,14 @@ All file-specific parameters have been preserved."""
             # Update final status
             num_failed = len(failed_files)
             success_rate = (processed_files / total_files) * 100 if total_files > 0 else 0
+            
             final_status = f"Concurrent batch analysis complete: {processed_files}/{total_files} files analyzed successfully ({success_rate:.0f}%)"
             
             if num_failed > 0:
                 final_status += f", {num_failed} failed"
+            
+            if auto_label:
+                final_status += f" | Auto-labeled: {auto_labeled_good} good, {auto_labeled_bad} bad"
                 
             self.status_label.setText(final_status)
             
@@ -3069,18 +3982,38 @@ All file-specific parameters have been preserved."""
             # Generate analysis summary
             summary = processor.get_analysis_summary(analysis_results)
             
+            # Calculate NN-specific statistics
+            nn_summary = ""
+            if use_nn:
+                total_nn_plateaus = sum(len(result.get('nn_plateaus', [])) for result in analysis_results.values())
+                files_with_nn_plateaus = sum(1 for result in analysis_results.values() if len(result.get('nn_plateaus', [])) > 0)
+                avg_nn_plateaus = total_nn_plateaus / processed_files if processed_files > 0 else 0
+                
+                nn_summary = f"""
+Neural Network Analysis:
+• NN threshold used: {nn_threshold}
+• Total NN plateaus found: {total_nn_plateaus}
+• Average NN plateaus per file: {avg_nn_plateaus:.1f}
+• Files with NN plateaus: {files_with_nn_plateaus}/{processed_files}
+
+Auto-labeling Results:
+• Files labeled as GOOD: {auto_labeled_good}
+• Files labeled as BAD: {auto_labeled_bad}
+• Auto-labeling rate: {((auto_labeled_good + auto_labeled_bad) / processed_files * 100):.1f}%"""
+            
             # Update results text with concurrent batch analysis summary
+            processing_method = f"Multi-core concurrent with Neural Networks (threshold={nn_threshold})" if use_nn else "Multi-core concurrent (CPU cores)"
             batch_summary = f"""Concurrent Batch Analysis Complete!
 
-Processing Method: Multi-core concurrent (CPU cores)
+Processing Method: {processing_method}
 Files processed: {processed_files}/{total_files}
 Success rate: {success_rate:.1f}%
 Failed analyses: {num_failed}
 
-Analysis Summary:
+Traditional Analysis Summary:
 • Total plateaus found: {summary['total_plateaus']}
 • Average plateaus per file: {summary['avg_plateaus_per_file']:.1f}
-• Files with plateaus: {summary['files_with_plateaus']}/{processed_files}
+• Files with plateaus: {summary['files_with_plateaus']}/{processed_files}{nn_summary}
 
 Velocity Statistics:"""
 

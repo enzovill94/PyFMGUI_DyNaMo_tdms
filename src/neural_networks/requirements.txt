@@ -1,0 +1,19 @@
+# Neural Network Requirements for Tether Analysis GUI
+# Add these to your existing requirements.txt or install separately
+
+# Core neural network framework
+torch>=1.9.0
+torchvision>=0.10.0
+
+# Scientific computing (likely already installed)
+numpy>=1.20.0
+scipy>=1.7.0
+
+# Optional: for better performance and additional features
+scikit-learn>=1.0.0
+
+# Installation command:
+# pip install torch torchvision numpy scipy scikit-learn
+
+# Note: If you encounter issues with PyTorch installation, 
+# visit https://pytorch.org/get-started/locally/ for platform-specific instructions

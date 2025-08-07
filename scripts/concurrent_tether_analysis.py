@@ -26,7 +26,7 @@ import numpy as np
 import traceback
 import multiprocessing as mp
 
-def process_single_file_concurrent(filepath, params):
+def process_single_file_concurrent(filepath, params, use_nn=False, nn_threshold=0.5, auto_label=False):
     """
     Wrapper function for concurrent processing of single tether analysis.
     
@@ -36,6 +36,9 @@ def process_single_file_concurrent(filepath, params):
     Args:
         filepath (str): Path to the TDMS file to analyze
         params (dict): Analysis parameters dictionary
+        use_nn (bool): Whether to run neural network analysis
+        nn_threshold (float): Confidence threshold for NN plateau detection
+        auto_label (bool): Whether to auto-label files based on NN results
         
     Returns:
         tuple: (filepath, result, error_message)
@@ -54,10 +57,74 @@ def process_single_file_concurrent(filepath, params):
         if not params:
             return (filepath, None, "No analysis parameters provided")
         
-        # Run the analysis
+        # Run the traditional analysis
         result = process_single_file(filepath, params, save_plots=False)
         
         if result:
+            # Add neural network analysis if enabled
+            if use_nn:
+                try:
+                    # Import NN modules locally (required for multiprocessing)
+                    import sys
+                    from pathlib import Path
+                    
+                    # Add neural networks path
+                    script_dir = Path(__file__).parent
+                    nn_path = script_dir.parent / 'src'
+                    if str(nn_path) not in sys.path:
+                        sys.path.append(str(nn_path))
+                    
+                    from neural_networks.integration_example import TetherAnalysisWithNN
+                    import numpy as np
+                    
+                    # Initialize NN analysis
+                    nn_analysis = TetherAnalysisWithNN()
+                    
+                    # Get force and time data
+                    force_data = result.get('defl_savitz', [])
+                    time_data = result.get('rel_time', [])
+                    
+                    if len(force_data) > 0 and len(time_data) > 0:
+                        # Run NN plateau detection
+                        nn_results = nn_analysis.detect_plateaus_nn(
+                            np.array(force_data), 
+                            np.array(time_data),
+                            confidence_threshold=nn_threshold
+                        )
+                        
+                        # Add NN results to the main result
+                        result['nn_plateau_results'] = nn_results
+                        result['nn_plateaus'] = nn_results.get('plateaus', [])
+                        nn_count = len(result['nn_plateaus'])
+                        
+                        # Auto-labeling logic
+                        if auto_label:
+                            if nn_count == 0:
+                                result['auto_label'] = 'bad'
+                                result['auto_label_reason'] = 'Neural network detected 0 plateaus'
+                            else:
+                                result['auto_label'] = 'good'
+                                result['auto_label_reason'] = f'Neural network detected {nn_count} plateaus'
+                        
+                        print(f"NN analysis for {os.path.basename(filepath)}: {nn_count} plateaus detected")
+                    else:
+                        result['nn_plateau_results'] = None
+                        result['nn_plateaus'] = []
+                        if auto_label:
+                            result['auto_label'] = 'bad'
+                            result['auto_label_reason'] = 'Empty force/time data'
+                            
+                except Exception as nn_error:
+                    print(f"Neural network analysis failed for {os.path.basename(filepath)}: {nn_error}")
+                    result['nn_plateau_results'] = None
+                    result['nn_plateaus'] = []
+                    if auto_label:
+                        result['auto_label'] = 'bad'
+                        result['auto_label_reason'] = f'NN analysis failed: {str(nn_error)}'
+            else:
+                # No NN analysis requested
+                result['nn_plateau_results'] = None
+                result['nn_plateaus'] = []
             # Success - return the result
             return (filepath, result, None)
         else:
@@ -130,7 +197,8 @@ class ConcurrentTetherProcessor:
         
         return valid_pairs, invalid_pairs
     
-    def process_files_concurrent(self, file_param_pairs, progress_callback=None, error_callback=None):
+    def process_files_concurrent(self, file_param_pairs, progress_callback=None, error_callback=None,
+                               use_nn=False, nn_threshold=0.5, auto_label=False):
         """
         Process multiple files concurrently using multiple CPU cores.
         
@@ -138,6 +206,9 @@ class ConcurrentTetherProcessor:
             file_param_pairs (list): List of (filepath, params) tuples
             progress_callback (callable, optional): Function called with (completed_count, total_count)
             error_callback (callable, optional): Function called with (filepath, error_message)
+            use_nn (bool): Whether to run neural network analysis
+            nn_threshold (float): Confidence threshold for NN plateau detection
+            auto_label (bool): Whether to auto-label files based on NN results
             
         Returns:
             dict: Dictionary mapping filepath -> analysis_result for successful analyses
@@ -161,13 +232,15 @@ class ConcurrentTetherProcessor:
         results = {}
         completed_count = 0
         
-        print(f"Starting concurrent analysis of {total_files} files using {self.max_workers} workers...")
+        nn_status = f" with NN analysis (threshold={nn_threshold})" if use_nn else ""
+        auto_label_status = " and auto-labeling" if auto_label else ""
+        print(f"Starting concurrent analysis of {total_files} files using {self.max_workers} workers{nn_status}{auto_label_status}...")
         
         try:
             with concurrent.futures.ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submit all tasks
+                # Submit all tasks with NN parameters
                 future_to_filepath = {
-                    executor.submit(process_single_file_concurrent, filepath, params): filepath
+                    executor.submit(process_single_file_concurrent, filepath, params, use_nn, nn_threshold, auto_label): filepath
                     for filepath, params in valid_pairs
                 }
                 
@@ -189,7 +262,13 @@ class ConcurrentTetherProcessor:
                             # Analysis succeeded
                             results[filepath] = analysis_result
                             plateau_count = len(analysis_result['plateaus']) if analysis_result.get('plateaus') else 0
-                            print(f"✓ Analyzed {os.path.basename(filepath)}: {plateau_count} plateaus found")
+                            nn_count = len(analysis_result.get('nn_plateaus', []))
+                            auto_label_info = f" -> {analysis_result.get('auto_label', 'no label')}" if auto_label else ""
+                            
+                            if use_nn:
+                                print(f"✓ Analyzed {os.path.basename(filepath)}: {plateau_count} traditional, {nn_count} NN plateaus{auto_label_info}")
+                            else:
+                                print(f"✓ Analyzed {os.path.basename(filepath)}: {plateau_count} plateaus found")
                         
                         # Update progress
                         if progress_callback:
