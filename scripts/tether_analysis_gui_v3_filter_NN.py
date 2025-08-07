@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QCheckBox, QTextEdit,
                              QShortcut, QTableWidget, QTableWidgetItem,
                              QHeaderView, QFileDialog, QDialog, QRadioButton, QButtonGroup,
-                             QMainWindow, QAction, QProgressDialog)
+                             QMainWindow, QAction, QProgressDialog, QAbstractItemView)
 from PyQt5.QtCore import pyqtSignal, QTimer, Qt, QObject
 from PyQt5.QtGui import QKeySequence, QFont
 import pyqtgraph as pg
@@ -103,9 +103,10 @@ class BatchAnalysisProgressDialog(QProgressDialog):
         QApplication.processEvents()
 
 class DragDropTableWidget(QTableWidget):
-    """Custom QTableWidget with drag and drop support for TDMS files"""
+    """Custom QTableWidget with drag and drop support for TDMS files, session files, and folders"""
     
     files_dropped = pyqtSignal(list)  # Signal emitted when files are dropped
+    sessions_dropped = pyqtSignal(list)  # Signal emitted when session files are dropped
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -115,14 +116,16 @@ class DragDropTableWidget(QTableWidget):
     def dragEnterEvent(self, event):
         """Handle drag enter events"""
         if event.mimeData().hasUrls():
-            # Check if any of the dropped items are TDMS files or folders
+            # Check if any of the dropped items are valid files or folders
             urls = event.mimeData().urls()
             has_valid_items = False
             
             for url in urls:
                 file_path = url.toLocalFile()
-                # Accept TDMS files or directories
-                if file_path.endswith('.tdms') or os.path.isdir(file_path):
+                # Accept TDMS files, CSV session files, or directories
+                if (file_path.endswith('.tdms') or 
+                    file_path.endswith('.csv') or 
+                    os.path.isdir(file_path)):
                     has_valid_items = True
                     break
             
@@ -141,26 +144,71 @@ class DragDropTableWidget(QTableWidget):
             event.ignore()
             
     def dropEvent(self, event):
-        """Handle drop events"""
+        """Handle drop events for TDMS files, session files, and folders"""
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
-            dropped_paths = []
+            tdms_files = []
+            session_files = []
+            directories = []
             
             for url in urls:
                 file_path = url.toLocalFile()
+                
                 if file_path.endswith('.tdms'):
-                    dropped_paths.append(file_path)
+                    tdms_files.append(file_path)
+                elif file_path.endswith('.csv'):
+                    # Check if it's a session file by looking at the content
+                    if self._is_session_file(file_path):
+                        session_files.append(file_path)
+                    else:
+                        print(f"Skipping CSV file (not a session): {os.path.basename(file_path)}")
                 elif os.path.isdir(file_path):
-                    # If it's a directory, add it to the list
-                    dropped_paths.append(file_path)
+                    directories.append(file_path)
             
-            if dropped_paths:
-                self.files_dropped.emit(dropped_paths)
+            # Process different types of drops
+            if session_files:
+                print(f"📂 Detected {len(session_files)} session file(s)")
+                self.sessions_dropped.emit(session_files)
+                event.acceptProposedAction()
+            elif tdms_files or directories:
+                # Combine TDMS files and directories for regular file processing
+                all_paths = tdms_files + directories
+                print(f"📁 Detected {len(tdms_files)} TDMS file(s) and {len(directories)} folder(s)")
+                self.files_dropped.emit(all_paths)
                 event.acceptProposedAction()
             else:
+                print("⚠️ No valid files found in drop")
                 event.ignore()
         else:
             event.ignore()
+    
+    def _is_session_file(self, file_path):
+        """Check if a CSV file is a tether analysis session file"""
+        try:
+            import pandas as pd
+            
+            # Read first few rows to check format
+            df = pd.read_csv(file_path, nrows=5)
+            
+            # Check for required session columns
+            required_columns = ['local_file_path', 'file_name', 'bool_good_curve']
+            has_required = all(col in df.columns for col in required_columns)
+            
+            # Additional check: look for session metadata or typical file paths
+            if has_required and len(df) > 0:
+                # Check if first row contains session metadata
+                first_path = df.iloc[0]['local_file_path']
+                if first_path == 'SESSION_METADATA':
+                    return True
+                
+                # Check if paths look like TDMS file paths
+                if any(path.endswith('.tdms') for path in df['local_file_path'].head(3)):
+                    return True
+            
+            return False
+            
+        except Exception:
+            return False
 
 class TetherAnalysisGUI(QMainWindow):
     def __init__(self, root_dir, *args, **kwargs):
@@ -235,7 +283,7 @@ class TetherAnalysisGUI(QMainWindow):
         
         # Left panel - File table
         left_panel = QVBoxLayout()
-        files_label = QLabel("TDMS Files (Drag & Drop folders/files here)")
+        files_label = QLabel("TDMS Files (Drag & Drop files, folders, or session files here)")
         files_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
         left_panel.addWidget(files_label)
         
@@ -243,8 +291,9 @@ class TetherAnalysisGUI(QMainWindow):
         self.file_table = DragDropTableWidget()
         self.setup_file_table()
         
-        # Connect drag-drop signal
+        # Connect drag-drop signals
         self.file_table.files_dropped.connect(self.handle_dropped_files)
+        self.file_table.sessions_dropped.connect(self.handle_dropped_sessions)
         
         left_panel.addWidget(self.file_table, 1)
         
@@ -365,17 +414,30 @@ class TetherAnalysisGUI(QMainWindow):
 🎯 Getting Started (Main Portal):
 • Use "Analysis" menu → "Load & Analyze Files..." (Ctrl+B)
 • This will load a directory and analyze all TDMS files concurrently
-• Alternatively: Drag folders or TDMS files into the file table
+• Alternatively: Drag folders, TDMS files, or session files into the file table
 • Or use File menu → Change Directory to browse for files
+
+📂 Drag & Drop Support:
+• TDMS Files: Drop individual TDMS files to load their directory
+• Folders: Drop folders to scan for TDMS files
+• Session Files (CSV): Drop to load or add to current session
+• Multiple Sessions: Drop multiple CSV session files to concatenate them
+
+📋 Multiple File Selection:
+• Cmd+click (Ctrl+click): Select/deselect individual files
+• Shift+click: Select range of files
+• G/B keys work on ALL selected files
+• Single click still works for individual file navigation
 
 ⌨️ Keyboard Shortcuts:
 • Ctrl+B - Load & Analyze Files (Main Portal)
 • ↑/↓ - Navigate files (Previous/Next)
-• G - Mark file as Good
-• B - Mark file as Bad  
+• G - Mark file(s) as Good (works on selection)
+• B - Mark file(s) as Bad (works on selection)
 • Enter - Run analysis on current file
 • S - Save session
 • L - Load session
+• Ctrl+Shift+L - Load multiple sessions
 
 🧠 Neural Network Features:
 • Automatic plateau detection using deep learning
@@ -491,6 +553,13 @@ Ready to analyze TDMS files efficiently with AI assistance!"""
         change_dir_action.setStatusTip('Change the root directory for TDMS files')
         change_dir_action.triggered.connect(self.change_directory)
         file_menu.addAction(change_dir_action)
+        
+        # Clear File List action
+        clear_list_action = QAction('🗑️ Clear File List', self)
+        clear_list_action.setShortcut('Ctrl+Shift+C')
+        clear_list_action.setStatusTip('Clear all files from the current list')
+        clear_list_action.triggered.connect(self.clear_file_list)
+        file_menu.addAction(clear_list_action)
         
         file_menu.addSeparator()
         
@@ -675,6 +744,56 @@ Ready to analyze TDMS files efficiently with AI assistance!"""
             self.status_label.setText(f"Error changing directory: {str(e)}")
             self.statusBar().showMessage(f"Error: {str(e)}")
         
+    def clear_file_list(self):
+        """Clear all files from the current file list"""
+        try:
+            from PyQt5.QtWidgets import QMessageBox
+            
+            # Ask for confirmation
+            reply = QMessageBox.question(
+                self, 
+                'Clear File List',
+                'Are you sure you want to clear all files from the list?\n\nThis will remove all loaded files and reset the analysis.',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                # Clear file table
+                self.file_table.clearContents()
+                self.file_table.setRowCount(0)
+                
+                # Clear file data structures
+                self.file_data = []
+                self.file_path = []
+                self.file = []
+                self.bool_good_curve = np.array([])
+                self.file_parameters = {}
+                self.plateau_selections = {}
+                
+                # Clear current analysis
+                self.current_analysis_result = None
+                self.current_file_path = None
+                self.current_force_data = None
+                
+                # Clear plots
+                self.plotview.clear()
+                self.analysis_plotview.clear()
+                
+                # Clear results display
+                self.results_text.setText("File list cleared. Load new files using 'Change Directory' or drag-and-drop.")
+                
+                # Update status
+                self.status_label.setText("File list cleared")
+                self.statusBar().showMessage("All files cleared from the list")
+                
+                print("✓ File list cleared successfully")
+                
+        except Exception as e:
+            self.status_label.setText(f"Error clearing file list: {str(e)}")
+            self.statusBar().showMessage(f"Error: {str(e)}")
+            print(f"✗ Error clearing file list: {e}")
+        
     def add_nn_menu_items(self, menubar):
         """Add neural network learning and management menu items"""
         
@@ -689,7 +808,7 @@ Ready to analyze TDMS files efficiently with AI assistance!"""
         
         # Load/Save trained models
         load_model_action = QAction("📂 Load Trained Model...", self)
-        load_model_action.setShortcut("Ctrl+Shift+L")
+        load_model_action.setShortcut("Ctrl+Alt+L")
         load_model_action.setStatusTip("Load a pre-trained neural network model")
         load_model_action.triggered.connect(self.load_nn_model)
         nn_menu.addAction(load_model_action)
@@ -1613,6 +1732,384 @@ Current Performance:
     def load_tdms_files(self, directory):
         """Load TDMS files from a directory (helper method for drag-drop)"""
         self.find_tdms_files(directory)
+    
+    def handle_dropped_sessions(self, session_paths):
+        """Handle session files dropped into the file table"""
+        if not session_paths:
+            return
+        
+        try:
+            from PyQt5.QtWidgets import QMessageBox
+            
+            # If we have session files, always show the load session options dialog
+            if len(session_paths) == 1:
+                # Single session file - use the standard load session dialog with options
+                self.load_session_file_with_options(session_paths[0])
+                
+            else:
+                # Multiple sessions - ask if they want to concatenate all
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle('Load Multiple Sessions')
+                msg_box.setText(f'{len(session_paths)} session files dropped')
+                msg_box.setInformativeText('This will load and concatenate all session files, adding all their files to your current list.')
+                msg_box.setIcon(QMessageBox.Question)
+                
+                # Add custom buttons
+                load_all_btn = msg_box.addButton("Load & Concatenate All", QMessageBox.AcceptRole)
+                cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+                
+                msg_box.setDefaultButton(load_all_btn)
+                
+                # Execute dialog and handle response
+                msg_box.exec_()
+                clicked_button = msg_box.clickedButton()
+                
+                if clicked_button == load_all_btn:
+                    self.load_compound_sessions_from_paths(session_paths)
+            
+        except Exception as e:
+            self.status_label.setText(f"Error loading dropped sessions: {str(e)}")
+            print(f"✗ Error loading dropped sessions: {e}")
+    
+    def load_session_file_with_options(self, session_path):
+        """Load a single session file with the standard options dialog"""
+        try:
+            # Create a temporary CSV file path to pass to the existing load_session logic
+            # We'll modify the load_session method to accept a file path parameter
+            self.load_session_with_path(session_path)
+            
+        except Exception as e:
+            self.status_label.setText(f"Error loading session: {str(e)}")
+            print(f"✗ Error loading session: {e}")
+    
+    def load_session_with_path(self, file_path=None):
+        """Load a session with optional file path (modified version of load_session)"""
+        try:
+            # If no file path provided, show file dialog
+            if file_path is None:
+                file_path, _ = QFileDialog.getOpenFileName(
+                    self, 
+                    "Load Tether Analysis Session", 
+                    self.root_dir, 
+                    "CSV files (*.csv);;All files (*.*)"
+                )
+                
+                if not file_path:
+                    return  # User cancelled
+            
+            # Show dialog to choose load options (always show this)
+            dialog = LoadSessionDialog(self)  # Use the class defined in this file
+            dialog.setModal(True)
+            dialog.raise_()
+            dialog.activateWindow()
+            
+            if dialog.exec_() != QDialog.Accepted:
+                return  # User cancelled the options dialog
+            
+            load_option = dialog.get_selected_option()
+            run_batch_analysis = dialog.get_batch_analysis_enabled()
+            
+            # Continue with the existing load session logic...
+            # Load the CSV file
+            df_session = pd.read_csv(file_path)
+            
+            # Check for session metadata (first row with special marker)
+            last_file_index = 0
+            
+            if (len(df_session) > 0 and 
+                df_session.iloc[0]['local_file_path'] == 'SESSION_METADATA'):
+                try:
+                    metadata_str = df_session.iloc[0]['file_parameters']
+                    session_metadata = json.loads(metadata_str)
+                    last_file_index = session_metadata.get('last_file_index', 0)
+                    print(f"Session metadata found - last file index: {last_file_index}")
+                    # Remove metadata row for file processing
+                    df_session = df_session.iloc[1:].reset_index(drop=True)
+                except Exception as e:
+                    print(f"Warning: Could not parse session metadata: {e}")
+            
+            # Validate the CSV format
+            required_columns = ['local_file_path', 'file_name', 'bool_good_curve']
+            if not all(col in df_session.columns for col in required_columns):
+                self.status_label.setText("Error: Invalid session file format")
+                return
+            
+            # Check if session has per-file parameters and plateau selections
+            has_file_parameters = 'file_parameters' in df_session.columns
+            has_plateau_selections = 'plateau_selections' in df_session.columns
+            has_analysis_status = 'analysis_status' in df_session.columns
+            has_calc_velocity = 'calc_ret_vel' in df_session.columns
+            
+            # Convert bool_good_curve to numeric to ensure proper filtering
+            df_session['bool_good_curve'] = pd.to_numeric(df_session['bool_good_curve'], errors='coerce').fillna(0).astype(int)
+            
+            # Filter files based on user selection
+            if load_option == "good":
+                df_session = df_session[df_session['bool_good_curve'] == 1]
+            elif load_option == "bad":
+                df_session = df_session[df_session['bool_good_curve'] == 0]
+            # For "all", no filtering needed
+            
+            if len(df_session) == 0:
+                self.status_label.setText(f"Error: No {load_option} files found in session")
+                return
+            
+            # Clear current file table only if we're replacing (not adding)
+            # For drag & drop, we typically want to replace
+            self.file_table.clearContents()
+            self.file_table.setRowCount(0)
+            
+            # Check if files still exist and load parameters
+            existing_files = []
+            existing_names = []
+            existing_good_curve = []
+            missing_files = []
+            loaded_file_parameters = {}
+            loaded_plateau_selections = {}
+            loaded_analysis_status = {}
+            loaded_calc_velocity = {}
+            
+            for _, row in df_session.iterrows():
+                file_path_row = row['local_file_path']
+                if os.path.exists(file_path_row):
+                    existing_files.append(file_path_row)
+                    existing_names.append(row['file_name'])
+                    existing_good_curve.append(row['bool_good_curve'])
+                    
+                    # Load per-file parameters if available
+                    if has_file_parameters and not pd.isna(row.get('file_parameters')):
+                        try:
+                            params = json.loads(row['file_parameters'])
+                            loaded_file_parameters[file_path_row] = params
+                        except Exception as e:
+                            print(f"Warning: Could not parse parameters for {file_path_row}: {e}")
+                    
+                    # Load plateau selections if available
+                    if has_plateau_selections and not pd.isna(row.get('plateau_selections')):
+                        try:
+                            selections = json.loads(row['plateau_selections'])
+                            loaded_plateau_selections[file_path_row] = selections
+                        except Exception as e:
+                            print(f"Warning: Could not parse plateau selections for {file_path_row}: {e}")
+                    
+                    # Load analysis status if available
+                    if has_analysis_status and not pd.isna(row.get('analysis_status')):
+                        loaded_analysis_status[file_path_row] = row['analysis_status']
+                    
+                    # Load calculated velocity if available
+                    if has_calc_velocity and not pd.isna(row.get('calc_ret_vel')):
+                        loaded_calc_velocity[file_path_row] = row['calc_ret_vel']
+                else:
+                    missing_files.append(file_path_row)
+            
+            if not existing_files:
+                self.status_label.setText(f"Error: No {load_option} files from session found")
+                return
+            
+            # Load the session files
+            self.file_path = existing_files
+            self.file = existing_names
+            self.bool_good_curve = np.array(existing_good_curve)
+            self.file_parameters = loaded_file_parameters
+            self.plateau_selections = loaded_plateau_selections
+            
+            # Create file data for the table with session data
+            from datetime import datetime
+            self.file_data = []
+            for i, (file_path, file_name) in enumerate(zip(existing_files, existing_names)):
+                # Get file statistics
+                try:
+                    stat = os.stat(file_path)
+                    file_size_kb = stat.st_size / 1024
+                    date_str = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
+                except Exception:
+                    file_size_kb = 0
+                    date_str = 'Unknown'
+                
+                # Determine status from bool_good_curve
+                status = 'Good' if self.bool_good_curve[i] == 1 else ('Bad' if self.bool_good_curve[i] == 0 else 'Not Analyzed')
+                
+                # Extract date taken from filename
+                date_taken = self.extract_date_from_filename(file_name)
+                
+                # Get saved analysis status and velocity
+                analysis_status = loaded_analysis_status.get(file_path, 'Not Analyzed')
+                calc_ret_vel = loaded_calc_velocity.get(file_path, None)
+                
+                self.file_data.append({
+                    'filename': file_name,
+                    'full_path': file_path,
+                    'status': status,
+                    'date_taken': date_taken,
+                    'date_modified': date_str,
+                    'size_kb': file_size_kb,
+                    'calc_ret_vel': calc_ret_vel,
+                    'analysis_status': analysis_status
+                })
+            
+            # Populate the table
+            self.populate_file_table()
+            
+            # Restore last file index if valid, otherwise start from 0
+            if 0 <= last_file_index < len(self.file_path):
+                self.index = last_file_index
+            else:
+                self.index = 0
+            
+            # Select the correct table row for the current file index
+            table_row = self.get_table_row_from_file_index(self.index)
+            self.select_row_preserve_scroll(table_row)
+            
+            # Load parameters for the current file
+            self.load_parameters_for_current_file()
+            
+            # Update status and results text
+            good_count = int(np.sum(self.bool_good_curve))
+            total_count = len(self.bool_good_curve)
+            
+            # Format option name for display
+            option_display = {
+                "all": "All files",
+                "good": "Good files only", 
+                "bad": "Bad files only"
+            }[load_option]
+            
+            session_info = f"Session loaded: {os.path.basename(file_path)}\n"
+            session_info += f"Load option: {option_display}\n"
+            session_info += f"Files loaded: {total_count}\n"
+            session_info += f"Good files: {good_count}\n"
+            session_info += f"Bad files: {total_count - good_count}\n"
+            session_info += f"Restored to file: {self.index + 1}/{total_count}\n"
+            
+            if has_file_parameters:
+                session_info += "Per-file parameters: Restored\n"
+            else:
+                session_info += "Per-file parameters: Using defaults (old session format)\n"
+            
+            if has_plateau_selections:
+                session_info += "Plateau selections: Restored\n"
+            else:
+                session_info += "Plateau selections: Using defaults (all selected)\n"
+            
+            if has_analysis_status:
+                session_info += "Analysis status: Restored\n"
+            else:
+                session_info += "Analysis status: Using defaults (Not Analyzed)\n"
+            
+            if has_calc_velocity:
+                # Count how many files have velocity data
+                velocity_count = sum(1 for v in loaded_calc_velocity.values() if v is not None)
+                session_info += f"Calculated velocities: {velocity_count}/{total_count} restored"
+            else:
+                session_info += "Calculated velocities: None (old session format)"
+            
+            if missing_files:
+                session_info += f"\n\nMissing files ({len(missing_files)}):\n"
+                session_info += "\n".join(missing_files[:5])  # Show first 5 missing files
+                if len(missing_files) > 5:
+                    session_info += f"\n... and {len(missing_files) - 5} more"
+            
+            self.results_text.setText(session_info)
+            
+            # Conditionally run batch analysis based on user selection
+            if run_batch_analysis:
+                QTimer.singleShot(200, self.run_batch_analysis_on_session_files)
+            else:
+                # Just analyze the current file to show something
+                QTimer.singleShot(200, self.run_analysis)
+            
+            self.status_label.setText(f"Loaded {option_display}: {good_count}/{total_count} good files")
+            
+        except Exception as e:
+            self.status_label.setText(f"Error loading session: {str(e)}")
+            self.results_text.setText(f"Error loading session: {str(e)}")
+    
+    def load_session_file(self, session_path):
+        """Load a single session file (replacement for current session)"""
+        try:
+            import pandas as pd
+            
+            # Load the session file
+            df = pd.read_csv(session_path)
+            
+            # Clear current session first
+            self.file_table.clearContents()
+            self.file_table.setRowCount(0)
+            self.file_path = []
+            self.file_data = []
+            self.bool_good_curve = np.array([])
+            self.file_parameters = {}
+            self.plateau_selections = {}
+            
+            # Filter out metadata rows and process file entries
+            file_rows = df[df['local_file_path'] != 'SESSION_METADATA']
+            
+            if len(file_rows) == 0:
+                self.status_label.setText("Session file contains no file entries")
+                return
+            
+            # Load files from session
+            loaded_count = 0
+            for _, row in file_rows.iterrows():
+                file_path = row['local_file_path']
+                if os.path.exists(file_path):
+                    self.file_path.append(file_path)
+                    loaded_count += 1
+            
+            # Create file data for the table (needed for populate_file_table)
+            self.file = [os.path.basename(fp) for fp in self.file_path]
+            self.file_data = []
+            for i, file_path in enumerate(self.file_path):
+                filename = os.path.basename(file_path)
+                try:
+                    stat = os.stat(file_path)
+                    file_size_kb = stat.st_size / 1024
+                    date_str = datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
+                except Exception:
+                    file_size_kb = 0
+                    date_str = 'Unknown'
+                
+                # Extract date taken from filename
+                date_taken = self.extract_date_from_filename(filename)
+                
+                self.file_data.append({
+                    'filename': filename,
+                    'full_path': file_path,
+                    'status': 'Not Analyzed',
+                    'date_taken': date_taken,
+                    'date_modified': date_str,
+                    'size_kb': file_size_kb,
+                    'calc_ret_vel': None,
+                    'analysis_status': 'Not Analyzed'
+                })
+            
+            # Update file table
+            self.populate_file_table()
+            
+            # Load status information
+            if 'bool_good_curve' in df.columns:
+                status_values = file_rows['bool_good_curve'].values
+                self.bool_good_curve = np.array(status_values, dtype=bool)
+            
+            self.status_label.setText(f"Loaded session: {loaded_count} files from {os.path.basename(session_path)}")
+            self.results_text.setText(f"Session loaded: {os.path.basename(session_path)}\n\n{loaded_count} files loaded successfully.")
+            
+            print(f"✓ Loaded session from {session_path}")
+            
+        except Exception as e:
+            self.status_label.setText(f"Error loading session: {str(e)}")
+            print(f"✗ Error loading session: {e}")
+    
+    def load_compound_sessions_from_paths(self, session_paths):
+        """Load multiple session files and concatenate them (uses existing compound session logic)"""
+        try:
+            # Use the existing compound session loading logic but with provided paths
+            # For drag-and-drop, include all file types by default
+            self._load_compound_sessions_internal(session_paths, include_good=True, include_bad=True, include_not_analyzed=True)
+            
+        except Exception as e:
+            self.status_label.setText(f"Error loading compound sessions: {str(e)}")
+            print(f"✗ Error loading compound sessions: {e}")
         
     def setup_file_table(self):
         """Setup the file table with sortable columns and index tracking
@@ -1629,11 +2126,20 @@ Current Performance:
         - Double-click filename column to restore original discovery order (unsort)
         - Up/Down arrow navigation follows original file order (not visual sort order)
         - This ensures Good/Bad marking workflow continues through all files
+        
+        Multiple Selection:
+        - Cmd+click (Ctrl+click) to select/deselect individual files
+        - Shift+click to select range of files
+        - G/B keys work on all selected files
         """
         # Define columns for file information
         headers = ['Filename', 'Status', 'Date Taken', 'Date Modified', 'Size (KB)', 'Calc Vel (μm/s)', 'Analysis Status']
         self.file_table.setColumnCount(len(headers))
         self.file_table.setHorizontalHeaderLabels(headers)
+        
+        # Enable multiple selection
+        self.file_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.file_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         
         # Enable sorting with proper index tracking
         self.file_table.setSortingEnabled(True)
@@ -1928,28 +2434,74 @@ Current Performance:
         self.file_table.setSortingEnabled(sorting_enabled)
                  
     def file_good(self):
-        """Mark current file as good"""
+        """Mark current file(s) as good - supports multiple selection"""
         print("DEBUG: file_good() called - G key pressed")
-        if self.file_path and len(self.file_path) > 0 and self.index < len(self.file_path):
-            self.bool_good_curve[self.index] = 1
-            self.update_file_status(self.index, 'Good', Qt.green)
-            self.status_label.setText("File marked as GOOD")
-            self.file_next()
+        
+        # Get selected rows
+        selected_rows = [item.row() for item in self.file_table.selectionModel().selectedRows()]
+        
+        if not selected_rows:
+            # No selection, use current index
+            if self.file_path and len(self.file_path) > 0 and self.index < len(self.file_path):
+                selected_file_indices = [self.index]
+            else:
+                print("DEBUG: Cannot mark file as good - no files loaded or invalid index")
+                self.status_label.setText("No files loaded to mark as good")
+                return
         else:
-            print("DEBUG: Cannot mark file as good - no files loaded or invalid index")
-            self.status_label.setText("No files loaded to mark as good")
+            # Convert table rows to file indices
+            selected_file_indices = [self.get_file_index_from_table_row(row) for row in selected_rows]
+        
+        # Mark all selected files as good
+        marked_count = 0
+        for file_index in selected_file_indices:
+            if 0 <= file_index < len(self.file_path):
+                self.bool_good_curve[file_index] = 1
+                self.update_file_status(file_index, 'Good', Qt.green)
+                marked_count += 1
+        
+        if marked_count == 1:
+            self.status_label.setText("File marked as GOOD")
+            # Only auto-advance if single file was marked
+            if len(selected_file_indices) == 1 and selected_file_indices[0] == self.index:
+                self.file_next()
+        else:
+            self.status_label.setText(f"{marked_count} files marked as GOOD")
             
     def file_bad(self):
-        """Mark current file as bad"""
+        """Mark current file(s) as bad - supports multiple selection"""
         print("DEBUG: file_bad() called - B key pressed")
-        if self.file_path and len(self.file_path) > 0 and self.index < len(self.file_path):
-            self.bool_good_curve[self.index] = 0
-            self.update_file_status(self.index, 'Bad', Qt.red)
-            self.status_label.setText("File marked as BAD")
-            self.file_next()
+        
+        # Get selected rows
+        selected_rows = [item.row() for item in self.file_table.selectionModel().selectedRows()]
+        
+        if not selected_rows:
+            # No selection, use current index
+            if self.file_path and len(self.file_path) > 0 and self.index < len(self.file_path):
+                selected_file_indices = [self.index]
+            else:
+                print("DEBUG: Cannot mark file as bad - no files loaded or invalid index")
+                self.status_label.setText("No files loaded to mark as bad")
+                return
         else:
-            print("DEBUG: Cannot mark file as bad - no files loaded or invalid index")
-            self.status_label.setText("No files loaded to mark as bad")
+            # Convert table rows to file indices
+            selected_file_indices = [self.get_file_index_from_table_row(row) for row in selected_rows]
+        
+        # Mark all selected files as bad
+        marked_count = 0
+        for file_index in selected_file_indices:
+            if 0 <= file_index < len(self.file_path):
+                self.bool_good_curve[file_index] = 0
+                self.update_file_status(file_index, 'Bad', Qt.red)
+                marked_count += 1
+        
+        if marked_count == 1:
+            self.status_label.setText("File marked as BAD")
+            # Only auto-advance if single file was marked
+            if len(selected_file_indices) == 1 and selected_file_indices[0] == self.index:
+                self.file_next()
+        else:
+            self.status_label.setText(f"{marked_count} files marked as BAD")
     
     def update_file_status(self, file_index, status, color):
         """Update file status in the table using correct row mapping"""
@@ -4055,6 +4607,8 @@ All file-specific parameters have been preserved."""
     def load_compound_sessions(self):
         """Load and add multiple session files to the current session"""
         try:
+            from PyQt5.QtWidgets import QDialog
+            
             # Open file dialog to select multiple session CSV files
             file_paths, _ = QFileDialog.getOpenFileNames(
                 self, 
@@ -4068,18 +4622,29 @@ All file-specific parameters have been preserved."""
             
             # Show dialog to choose load options
             dialog = LoadSessionDialog(self)
-            dialog.setModal(True)
-            dialog.raise_()
-            dialog.activateWindow()
-            if dialog.exec_() != QDialog.Accepted:
-                return  # User cancelled the options dialog
-            
-            load_option = dialog.get_selected_option()
-            run_batch_analysis = dialog.get_batch_analysis_enabled()
+            if dialog.exec_() == QDialog.Accepted:
+                # Get options from dialog
+                include_good = dialog.good_checkbox.isChecked()
+                include_bad = dialog.bad_checkbox.isChecked()
+                include_not_analyzed = dialog.not_analyzed_checkbox.isChecked()
+                
+                # Use internal helper with paths
+                self._load_compound_sessions_internal(file_paths, include_good, include_bad, include_not_analyzed)
+                
+        except Exception as e:
+            self.status_label.setText(f"Error in load_compound_sessions: {str(e)}")
+            print(f"✗ Error in load_compound_sessions: {e}")
+    
+    def _load_compound_sessions_internal(self, file_paths, include_good=True, include_bad=True, include_not_analyzed=True):
+        """Internal helper to load multiple session files with given options"""
+        try:
+            # Default load options for internal use (when called from drag-drop)
+            load_option = "all"  # Load all files by default
+            run_batch_analysis = False  # Don't auto-run batch analysis by default
             
             # Start with current session data or empty if none
             if hasattr(self, 'file_path') and self.file_path:
-                # Keep existing session data
+                # FIXED: Keep existing session data as lists that we can extend
                 combined_file_paths = list(self.file_path)
                 combined_file_names = list(self.file)
                 combined_bool_good_curve = list(self.bool_good_curve)
@@ -4096,7 +4661,8 @@ All file-specific parameters have been preserved."""
                             combined_analysis_status[file_path] = file_data.get('analysis_status', 'Not Analyzed')
                             combined_calc_velocity[file_path] = file_data.get('calc_ret_vel', None)
                 
-                session_info = f"Adding {len(file_paths)} session files to current session with {len(self.file_path)} files:\n\n"
+                session_info = f"Starting with current session: {len(self.file_path)} files\n"
+                session_info += f"Adding {len(file_paths)} session files...\n\n"
                 original_file_count = len(self.file_path)
             else:
                 # No current session, start fresh
@@ -4110,6 +4676,17 @@ All file-specific parameters have been preserved."""
                 
                 session_info = f"Loading {len(file_paths)} session files (no current session):\n\n"
                 original_file_count = 0
+            
+            # Track files added from each session
+            total_files_added = 0
+            total_duplicates_skipped = 0
+            total_missing_files = 0
+            
+            # Enhanced duplicate detection - create a set of existing file paths for faster lookup
+            existing_file_paths_set = set(combined_file_paths)
+            
+            # Also track by filename (basename) to catch files moved between directories
+            existing_file_names_set = set(os.path.basename(path) for path in combined_file_paths)
             
             for session_file in file_paths:
                 try:
@@ -4142,21 +4719,47 @@ All file-specific parameters have been preserved."""
                     elif load_option == "bad":
                         df_session = df_session[df_session['bool_good_curve'] == 0]
                     
-                    # Process each file in this session
+                    # Process each file in this session and APPEND to existing lists
                     session_files_added = 0
+                    session_duplicates_skipped = 0
+                    session_missing_files = 0
+                    
                     for _, row in df_session.iterrows():
                         file_path_row = row['local_file_path']
+                        file_name_row = row['file_name']
+                        file_basename = os.path.basename(file_path_row)
                         
-                        # Skip duplicates (same file path already loaded)
-                        if file_path_row in combined_file_paths:
+                        # Enhanced duplicate detection:
+                        # 1. Check exact file path match
+                        # 2. Check if filename already exists (different paths, same file)
+                        duplicate_reason = None
+                        
+                        if file_path_row in existing_file_paths_set:
+                            duplicate_reason = "exact path match"
+                        elif file_basename in existing_file_names_set:
+                            duplicate_reason = "filename match (different path)"
+                        elif file_name_row in existing_file_names_set:
+                            duplicate_reason = "stored filename match"
+                        
+                        if duplicate_reason:
+                            session_duplicates_skipped += 1
+                            total_duplicates_skipped += 1
+                            print(f"  Skipping duplicate: {file_basename} ({duplicate_reason})")
                             continue
                             
                         # Check if file exists
                         if os.path.exists(file_path_row):
+                            # APPEND to existing lists instead of replacing
                             combined_file_paths.append(file_path_row)
-                            combined_file_names.append(row['file_name'])
+                            combined_file_names.append(file_name_row)
                             combined_bool_good_curve.append(int(row['bool_good_curve']))
                             session_files_added += 1
+                            total_files_added += 1
+                            
+                            # Add to tracking sets to prevent future duplicates within this operation
+                            existing_file_paths_set.add(file_path_row)
+                            existing_file_names_set.add(file_basename)
+                            existing_file_names_set.add(file_name_row)
                             
                             # Load per-file parameters if available
                             if has_file_parameters and pd.notna(row['file_parameters']):
@@ -4192,8 +4795,19 @@ All file-specific parameters have been preserved."""
                                     combined_calc_velocity[file_path_row] = None
                             else:
                                 combined_calc_velocity[file_path_row] = None
+                        else:
+                            session_missing_files += 1
+                            total_missing_files += 1
+                            print(f"  Missing file: {file_basename}")
                     
-                    session_info += f"✓ {os.path.basename(session_file)}: {session_files_added} files added\n"
+                    # Report results for this session with enhanced details
+                    session_info += f"✓ {os.path.basename(session_file)}:\n"
+                    session_info += f"   - Files added: {session_files_added}\n"
+                    if session_duplicates_skipped > 0:
+                        session_info += f"   - Duplicates skipped: {session_duplicates_skipped}\n"
+                    if session_missing_files > 0:
+                        session_info += f"   - Missing files: {session_missing_files}\n"
+                    session_info += "\n"
                     
                 except Exception as e:
                     session_info += f"✗ {os.path.basename(session_file)}: Error - {str(e)}\n"
@@ -4202,24 +4816,47 @@ All file-specific parameters have been preserved."""
                 self.status_label.setText("Error: No files found in any session")
                 return
             
-            # Preserve current file index if we had a session before
+            # Only proceed if we actually added new files
+            if total_files_added == 0:
+                session_info += f"\n⚠ No new files were added!\n"
+                session_info += f"All {len(file_paths)} session files contained only:\n"
+                if total_duplicates_skipped > 0:
+                    session_info += f"   - {total_duplicates_skipped} duplicate files (already in current session)\n"
+                if total_missing_files > 0:
+                    session_info += f"   - {total_missing_files} missing files (not found on disk)\n"
+                session_info += "\nNo changes were made to the current session.\n"
+                
+                self.results_text.setText(session_info)
+                self.status_label.setText("No new files added to session")
+                return
+            
+            # Store the current file index to preserve position if we had a session before
             original_index = self.index if hasattr(self, 'index') and original_file_count > 0 else 0
             
-            # Clear current file table
-            self.file_table.clearContents()
-            self.file_table.setRowCount(0)
+            # PRESERVE THE EXISTING TABLE AND JUST ADD NEW ROWS
+            # We'll update the data structures and then refresh the table
             
-            # Load the combined session data
+            # Update the main data structures with the combined data
             self.file_path = combined_file_paths
             self.file = combined_file_names
             self.bool_good_curve = np.array(combined_bool_good_curve)
             self.file_parameters = combined_file_parameters
             self.plateau_selections = combined_plateau_selections
             
-            # Create file data for the table
+            # Create NEW file_data entries for the new files only
             from datetime import datetime
-            self.file_data = []
-            for i, (file_path, file_name) in enumerate(zip(combined_file_paths, combined_file_names)):
+            
+            # Keep existing file_data and append new entries
+            if not hasattr(self, 'file_data'):
+                self.file_data = []
+            
+            # Ensure we have the right number of entries
+            while len(self.file_data) < len(combined_file_paths):
+                # Add new file_data entries for the new files
+                i = len(self.file_data)
+                file_path = combined_file_paths[i]
+                file_name = combined_file_names[i]
+                
                 # Get file statistics
                 try:
                     stat_info = os.stat(file_path)
@@ -4251,14 +4888,14 @@ All file-specific parameters have been preserved."""
                     'analysis_status': analysis_status
                 })
             
-            # Populate the table
+            # Refresh the table with all files (existing + new)
             self.populate_file_table()
             
             # Set file index (preserve original position if adding to existing session)
             if original_file_count > 0 and original_index < len(combined_file_paths):
-                self.index = original_index
+                self.index = original_index  # Stay at current position
             else:
-                self.index = 0
+                self.index = 0  # Start at beginning if no previous session
                 
             # Get the correct table row for the current file index
             table_row = self.get_table_row_from_file_index(self.index)
@@ -4277,18 +4914,34 @@ All file-specific parameters have been preserved."""
                 "bad": "Bad files only"
             }[load_option]
             
-            session_info += "\nCombined Session Summary:\n"
+            session_info += f"📊 Session Concatenation Summary:\n"
             session_info += f"Load option: {option_display}\n"
             session_info += f"Original files in session: {original_file_count}\n"
-            session_info += f"New files added: {total_count - original_file_count}\n"
+            session_info += f"New files added: {total_files_added}\n"
             session_info += f"Total files now: {total_count}\n"
             session_info += f"Good files: {good_count}\n"
             session_info += f"Bad files: {total_count - good_count}\n"
             
+            # Enhanced duplicate and missing file reporting
+            if total_duplicates_skipped > 0:
+                session_info += f"Duplicate files skipped: {total_duplicates_skipped}\n"
+            if total_missing_files > 0:
+                session_info += f"Missing files (not found): {total_missing_files}\n"
+            
             if original_file_count > 0:
-                session_info += f"Starting at file: {self.index + 1}/{total_count} (preserved position)\n"
+                session_info += f"Current position: File {self.index + 1}/{total_count} (preserved)\n"
             else:
-                session_info += f"Starting at file: 1/{total_count}\n"
+                session_info += f"Starting at: File 1/{total_count}\n"
+            
+            session_info += f"\n✅ Successfully concatenated {len(file_paths)} session files!"
+            
+            if total_duplicates_skipped > 0 or total_missing_files > 0:
+                session_info += f"\n\n📋 File Processing Summary:"
+                session_info += f"\n   ✅ Added: {total_files_added} files"
+                if total_duplicates_skipped > 0:
+                    session_info += f"\n   ⚠️ Duplicates: {total_duplicates_skipped} files (skipped)"
+                if total_missing_files > 0:
+                    session_info += f"\n   ❌ Missing: {total_missing_files} files (not found on disk)"
             
             self.results_text.setText(session_info)
             
@@ -4299,7 +4952,10 @@ All file-specific parameters have been preserved."""
                 # Just analyze the current file to show something
                 QTimer.singleShot(200, self.run_analysis)
             
-            self.status_label.setText(f"Added {len(file_paths)} sessions: {good_count}/{total_count} good files (total)")
+            success_msg = f"✅ Added {total_files_added} files: {good_count}/{total_count} good (total)"
+            if total_duplicates_skipped > 0:
+                success_msg += f", {total_duplicates_skipped} duplicates skipped"
+            self.status_label.setText(success_msg)
             
         except Exception as e:
             self.status_label.setText(f"Error loading compound sessions: {str(e)}")
