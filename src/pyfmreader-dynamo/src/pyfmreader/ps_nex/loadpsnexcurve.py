@@ -64,7 +64,7 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
     curve_properties[str(curve_index)][i][f"segment_{i}_dec_factor"]
     for i in num_segment_arr])
 
-    print (f'decimation: {dec_seg}')
+    # print (f'decimation: {dec_seg}')
 
     # dec_factor = 1
     # if dec_seg[0] != 1:
@@ -90,11 +90,11 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
 
     tick_sampling_rate_time_s = dec_seg / seg_sampling_rate
     # z_sensor_delay = 1e-3;bool_correct_overshoot = True
-    print (f"z_sensor_delay: {z_sensor_delay}, bool_correct_overshoot: {bool_correct_overshoot} ")
+    # print (f"z_sensor_delay: {z_sensor_delay}, bool_correct_overshoot: {bool_correct_overshoot} ")
 
     num_pts_rm = int(z_sensor_delay/tick_sampling_rate_time_s[0])
     # num_pts_rm = 1
-    print(f"points removed : {num_pts_rm}")
+    # print(f"points removed : {num_pts_rm}")
 
     # sr_ticks = (1/seg_sampling_rate)/file_metadata['instrument_tick_time_(s)']
     relative_segment_sampling_rate = ((1 / seg_sampling_rate) * dec_seg)
@@ -141,7 +141,7 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
         num_pts_con = sizes_seg[1]
     # deflection = deflection[:-num_pts_rm]
     # height = height[num_pts_rm:]
-    print(f'Deflection Length: {len(deflection)}, Height: {len(height)}')
+    # print(f'Deflection Length: {len(deflection)}, Height: {len(height)}')
     #finding the seg_pos_array from max z height 
 
     # correct start and end indices to match the length of the array of
@@ -154,7 +154,7 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
 
         start_pos,end_pos = start_indices[idx],end_indices[idx]
 
-        print(start_pos,end_pos)
+        # print(start_pos,end_pos)
 
         segment_id = num_segment_arr[idx]
         # segment_raw_data = {}
@@ -176,7 +176,7 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
         # TO DO: Time can be exported, handle this situation.
         #segment_formated_data["time"] = np.linspace(0, segment_duration, segment_num_points, endpoint=False)
         
-        print (f"segment relative position: {end_pos-start_pos}, segment duration: {segment_duration}")
+        # print (f"segment relative position: {end_pos-start_pos}, segment duration: {segment_duration}")
         segment_formated_data["time"] = np.linspace(0, segment_duration, end_pos-start_pos, endpoint=False)
         #segment_formated_data["time"] = np.linspace(0, segment_duration, segment_num_points, endpoint=False)
 
@@ -200,12 +200,12 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
         segment.z_displacement = segment.segment_metadata[f"segment_{segment_id}_Z_retract_length_(V)"]
         
         
-        print(segment.segment_type)
+        # print(segment.segment_type)
         if segment.segment_type == "App":
             #if we overshoot in the appracoh 
             if bool_correct_overshoot:
                 if np.nanargmax(height) != end_pos:
-                    print("overshoot in the approach, accounted for   ")
+                    # print("overshoot in the approach, accounted for   ")
                     end_indices[idx] = np.nanargmax(height)
                     # Start Contact
                     start_indices[idx+1] = np.nanargmax(height) + 1
@@ -222,7 +222,7 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
 
             force_curve.extend_segments.append((int(segment.segment_id), segment))
                     
-            print("removed overshoot")
+            # print("removed overshoot")
         elif segment.segment_type == "Ret":
             #TODO rem half points from each time segment for aligning  
             if z_sensor_delay>0 :
@@ -236,9 +236,9 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
         elif segment.segment_type == "Modulation":
             force_curve.modulation_segments.append((int(segment.segment_id), segment))
 
-        print(f'start_indices: {start_indices}')
-        print(f'end_indices: {end_indices}')
-        print(f'NumPnts: {final_nb_points}')
-        print ("---------------------")
+        # print(f'start_indices: {start_indices}')
+        # print(f'end_indices: {end_indices}')
+        # print(f'NumPnts: {final_nb_points}')
+        # print ("---------------------")
  
     return force_curve

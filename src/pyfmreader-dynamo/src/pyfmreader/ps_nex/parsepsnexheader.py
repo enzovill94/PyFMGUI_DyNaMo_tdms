@@ -204,7 +204,7 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
     
     seg_i_pt_cal = int((seg_dur_ticks * seg_sr * tick_time_s)/seg_dec_factor)
    
-    relativ_sr = seg_sr / seg_dec_factor #Hz
+    # relativ_sr = seg_sr / seg_dec_factor #Hz
     segment_metadata[f"segment_{segment_id}_nb_points_cal"] =seg_i_pt_cal
 
     # added by Lorenzo june 10 2025
@@ -228,7 +228,7 @@ def parsePSNEXsegmentheader(filepath,curve_properties,segment_id, UFF, curve_ind
     z_sens_um_v = z_stage_sensitivity *1e-03 # convert nm/V to um/V
     # vel_sens = (z_sens_um_v / tick_time_z_loop / decimation_factor)
     ramp_speed_um_s = (seg_vel_v_tick / tick_time_z_loop) * z_sens_um_v # um/s
-    print (f'segment_{segment_id}_ramp_speed_um/s: {ramp_speed_um_s:.3g} um/s')
+    # print (f'segment_{segment_id}_ramp_speed_um/s: {ramp_speed_um_s:.3g} um/s')
     segment_metadata[f"segment_{segment_id}_ramp_speed_um/s"] = ramp_speed_um_s
     segment_metadata[f"segment_{segment_id}_ramp_speed_nm/s"] = ramp_speed_um_s * 1e3
     # print (f'segment_{segment_id}_ramp_speed_nm/s: {segment_metadata[f"segment_{segment_id}_ramp_speed_nm/s"]:.3g} nm/s')
