@@ -471,7 +471,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
     print(f"\nProcessing file: {os.path.basename(filename)}")
     
     # Load file
-    file = loadfile(filename)
+    file = loadfile(filename, hs3_bool=True)
     filemetadata = file.filemetadata
     
     # Get file parameters
@@ -844,6 +844,12 @@ def butterworth_bandstop(xf, f_low, f_high, order=5):
     bandwidth = f_high - f_low
     eps = 1e-12
     return 1 / (1 + ((xf * bandwidth) / ((xf**2 - f_center**2) + eps))**(2 * order))
+
+
+
+
+
+
 
 # to run batch analysis standalone
 if __name__ == "__main__":
