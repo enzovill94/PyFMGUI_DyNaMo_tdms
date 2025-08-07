@@ -12,31 +12,37 @@ from .ps_nex.loadpsnexfile import loadPSNEXfile
 from .load_uff import loadUFFtxt
 from .uff import UFF
 
-def loadfile(filepath):
+def loadfile(filepath, **kwargs):
     """
-    Load AFM file. 
+    Load AFM data file in various supported formats.
+
+    Supported formats and their extensions:
+        - JPK: .jpk-force, .jpk-force-map, .jpk-qi-data, .zip (JPK archives)
+        - JPK Thermal: .tnd
+        - NANOSCOPE: .spm, .pfc, .00X (where X is a digit)
+        - UFF: .uff, .txt
+        - PS-NEX: .tdms
+        - HS3: .tdms (when hs3_bool=True)
+
+    Parameters:
+        filepath (str): Path to the AFM data file.
+        hs3_bool (bool, optional): If True and file is PS-NEX, load as HS3 format. Default is False.
+        **kwargs: Additional keyword arguments for specific loaders.
+
+    Returns:
+        UFF: For JPK, NANOSCOPE, UFF, and PS-NEX files, returns a UFF object containing loaded data.
+        tuple: For JPK Thermal files, returns a tuple:
+            (amplitude (np.ndarray), frequencies (np.ndarray), fit_data (np.ndarray), parameters (dict))
+
+    Raises:
+        Exception: If the file format is not supported or cannot be loaded.
+    """
+    # check if hs3_bool is in kwargs
+    if 'hs3_bool' in kwargs:
+        hs3_bool = kwargs['hs3_bool']
+    else:
+        hs3_bool = False
     
-    Supported formats:
-        - JPK --> .jpk-force, .jpk-force-map, .jpk-qi-data
-        - JPK Thermal --> .tnd
-        - NANOSCOPE --> .spm, .pfc, .00X
-        - UFF --> .uff
-        - PS-NEX --> .tdms 
-
-            Parameters:
-                    filepath (str): Path to the file.
-            
-            Returns:
-                    If JPK, NANOSCOPE OR UFF:
-                        UFF (uff.UFF): Universal File Format object containing loaded data.
-                    If JPK Thermal:
-                        Amplitude (m^2/V) (np.array),
-                        Frequencies (Hz) (np.array),
-                        Fit-Data (m^2/V) (np.array),
-                        Parameters (dict)
-
-
-    """
     split_path = filepath.split(os.extsep)
     # Depending on the configuration of the OS, JPK files have the following
     # extension: .jpk-force.zip
@@ -59,7 +65,12 @@ def loadfile(filepath):
     
     elif filesuffix in psnexfiles:
         # print("is the best")
-        return loadPSNEXfile(filepath, uffobj)
+        if hs3_bool:
+            from .hs3.loadhs3file import loadHS3file
+            return loadHS3file(filepath, uffobj)
+            print("HS3 file loaded")
+        else:
+            return loadPSNEXfile(filepath, uffobj)
     
     else:
         Exception(f"Can not load file: {filepath}")

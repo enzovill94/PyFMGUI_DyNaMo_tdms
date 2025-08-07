@@ -6,6 +6,7 @@ nanoscfiles = ('spm', 'pfc')                                    # As in 18-07-20
 ufffiles = ('uff')                                              # As in 18-07-2022
 jpkthermalfiles = ('tnd')                                       # As in 18-07-2022
 psnexfiles = ('tdms','.tdms','PSNEX.tdms')                                       # As in 31.05.2024
+hs3files = ('HS3_laura.tdms')                           # As in 07.08.2025
 
 # Default values for UFF (Universal File Format) files.
 UFF_code = '_1_2_3_4_5'                                         # Default UFF code for V.0.1.1

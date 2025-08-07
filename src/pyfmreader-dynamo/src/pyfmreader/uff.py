@@ -12,6 +12,7 @@ from .ps_nex.loadpsnexcurve import loadPSNEXcurve
 from .ps_nex.loadpsneximg import loadPSNEXimg
 from .load_uff import loadUFFcurve
 from .save_uff import saveUFFtxt
+from .hs3.loadhs3curve import loadhs3curve
 
 class UFF:
     """
@@ -78,10 +79,10 @@ class UFF:
         elif file_type in ufffiles:
             FC = loadUFFcurve(self.filemetadata)
         elif file_type in psnexfiles:
-            # z_sensor_delay = self.params.child('General Options').child('Z Sensor Delay').value()
-            # bool_correct_overshoot = self.params.child('General Options').child('Correct Overshoot').value()
-            # print (f"z_sensor_delay: {z_sensor_delay}, bool_correct_overshoot: {bool_correct_overshoot} ")
-            FC = loadPSNEXcurve(self.filemetadata, curveidx)    
+            FC = loadPSNEXcurve(self.filemetadata, curveidx) 
+        elif file_type in hs3files:
+            FC = loadhs3curve(self.filemetadata, curveidx)
+               
         # Store the loaded curve in the cache
         self._curve_cache = FC
         print (self._curve_cache)
@@ -117,6 +118,12 @@ class UFF:
         elif file_type in ufffiles:
             FC = self._loadcurve(None, None, file_type)
         elif file_type in psnexfiles:
+            if self._curve_cache is not None:
+                # If the curve is already cached, return it
+                FC = self._curve_cache
+            else:
+                FC = self._loadcurve(curveidx, None, file_type)
+        elif file_type in hs3files:
             if self._curve_cache is not None:
                 # If the curve is already cached, return it
                 FC = self._curve_cache

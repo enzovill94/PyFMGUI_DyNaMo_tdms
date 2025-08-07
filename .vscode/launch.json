@@ -54,7 +54,17 @@
                 "SCREEN_IDX": "2",
                 "workingDirectory": "/Users/evillz/Data/article/2025_07_01_THP1_phd/cell2/",
             }
+        },
+        {
+            "name": "TetherViewer_GUI_V3_filter_NN",  // Appears in the debug dropdown
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PyFMGUI_DyNaMo/scripts/tether_analysis_gui_v3_filter_NN.py",  // Full path to your entrypoint script
+            "console": "integratedTerminal",
+            // "env": {
+            //     "SCREEN_IDX": "2",
+            //     "workingDirectory": "/Users/evillz/Data/article/2025_07_01_THP1_phd/cell2/",
+            // }
         }
-
     ]
 }
