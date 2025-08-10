@@ -222,11 +222,15 @@ def run_batch_analysis(session_file, output_dir=None):
                             'mean dN/dt': float(plat_row.get('mean dN/dt')),
                             'plateau_velocity_calc': float(plat_row.get('velocity_calc_um_s')),
                             'velocity_metadata': int(round(result.get('velocity_metadata'))),
+                            'max_idx': int(plat_row.get('idx_max')),
                             'start_idx': int(plat_row.get('start')),
                             'end_idx': int(plat_row.get('end')),
                             'slope': float(plat_row.get('plateau_slope')),
                             'tether_lifetime_m': float(plat_row.get('tether_lifetime_m')),
                             'tether_lifetime_s': float(plat_row.get('tether_lifetime_s')),
+                            'rupture_start': int(plat_row.get('ruptures_start')),
+                            'rupture_end': int(plat_row.get('ruptures_end')),
+                            'rupture_slope': float(plat_row.get('rupture_slope', np.nan))  # Handle missing rupture slope
                         }
                         detailed_plateau_data.append(plateau_detail)
                         
@@ -285,6 +289,8 @@ def main():
     # session_file = "/Users/evillz/Data/article/2025_07_01_THP1_phd/sessions/latest/test/tether_session_20250716_192549.csv"
     session_file = "/Users/evillz/Data/article/2025_07_01_THP1_phd/sessions/velocity_normalized_thp1_cell1/tether_session_20250805_225739_new_1.csv"
     session_file = '/Users/evillz/Data/article/2025_07_01_THP1_phd/sessions/velocity_normalized_thp1_cell1/tether_session_20250805_131220_all.csv'
+    session_file = '/Users/evillz/Data/article/final_yey/tether_session_20250808_132848.csv'
+    session_file = '/Users/evillz/Data/article/final_yey/final/yess/tether_session_20250809_170501.csv'
     # # Option 2: Interactive prompt
     # session_file = input("Enter path to session CSV file: ")
 

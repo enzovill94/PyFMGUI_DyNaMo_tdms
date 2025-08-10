@@ -40,7 +40,7 @@ class ParameterTreeWidget(QWidget):
         
         self.maintain_params_checkbox = QCheckBox("Maintain current parameters")
         self.maintain_params_checkbox.setChecked(False)
-        self.maintain_params_checkbox.setToolTip("Keep current parameter values when switching files")
+        self.maintain_params_checkbox.setToolTip("Keep current parameter values when switching files.\n\nIf parameters are selected in the tree:\n- Only selected parameters will be maintained\n- Other parameters will load from file\n\nIf no parameters are selected:\n- All parameters will be maintained")
         checkbox_layout.addWidget(self.maintain_params_checkbox)
         
         layout.addLayout(checkbox_layout)
@@ -214,8 +214,13 @@ class ParameterTreeWidget(QWidget):
         except Exception as e:
             print(f"Error setting parameter value for {key}: {e}")
 
-    def setParameters(self, params):
-        """Set parameters with automatic wavenumber to wavelength conversion"""
+    def setParameters(self, params, selective_maintain=False):
+        """Set parameters with automatic wavenumber to wavelength conversion
+        
+        Args:
+            params (dict): Parameters to set
+            selective_maintain (bool): If True, only set parameters that are not being maintained
+        """
         
         def wavenumber_to_wavelength(wavenumber_um_inv):
             """Convert wavenumber in µm⁻¹ to wavelength in micrometers"""
@@ -226,6 +231,11 @@ class ParameterTreeWidget(QWidget):
             if key in self.param_map:
                 param_name = self.param_map[key]['name']
                 param_path = self._find_param_path(param_name)
+                
+                # Check if this parameter should be maintained (skipped)
+                if selective_maintain and self.should_maintain_parameters(param_path):
+                    continue
+                
                 if param_path:
                     val = value
                     if key == 'pl_threshold':
@@ -243,9 +253,10 @@ class ParameterTreeWidget(QWidget):
                     # Set individual parameters
                     min_path = self._find_param_path('Butterworth Min λ (µm)')
                     max_path = self._find_param_path('Butterworth Max λ (µm)')
-                    if min_path:
+                    
+                    if min_path and not (selective_maintain and self.should_maintain_parameters(min_path)):
                         self._set_param_value(min_path, wl_min)
-                    if max_path:
+                    if max_path and not (selective_maintain and self.should_maintain_parameters(max_path)):
                         self._set_param_value(max_path, wl_max)
             except (ValueError, SyntaxError):
                 pass  # Skip if parsing fails
@@ -258,9 +269,10 @@ class ParameterTreeWidget(QWidget):
                     # Set individual parameters
                     min_path = self._find_param_path('Band Suppress Min λ (µm)')
                     max_path = self._find_param_path('Band Suppress Max λ (µm)')
-                    if min_path:
+                    
+                    if min_path and not (selective_maintain and self.should_maintain_parameters(min_path)):
                         self._set_param_value(min_path, wl_min)
-                    if max_path:
+                    if max_path and not (selective_maintain and self.should_maintain_parameters(max_path)):
                         self._set_param_value(max_path, wl_max)
             except (ValueError, SyntaxError):
                 pass  # Skip if parsing fails
@@ -277,9 +289,10 @@ class ParameterTreeWidget(QWidget):
             # Set individual parameters
             min_path = self._find_param_path('Butterworth Min λ (µm)')
             max_path = self._find_param_path('Butterworth Max λ (µm)')
-            if min_path:
+            
+            if min_path and not (selective_maintain and self.should_maintain_parameters(min_path)):
                 self._set_param_value(min_path, wl_min)
-            if max_path:
+            if max_path and not (selective_maintain and self.should_maintain_parameters(max_path)):
                 self._set_param_value(max_path, wl_max)
         
         if 'denoise_ranges' in params and 'band_suppress_min_wavelength' not in params:
@@ -294,25 +307,96 @@ class ParameterTreeWidget(QWidget):
                     # Set individual parameters
                     min_path = self._find_param_path('Band Suppress Min λ (µm)')
                     max_path = self._find_param_path('Band Suppress Max λ (µm)')
-                    if min_path:
+                    
+                    if min_path and not (selective_maintain and self.should_maintain_parameters(min_path)):
                         self._set_param_value(min_path, wl_min)
-                    if max_path:
+                    if max_path and not (selective_maintain and self.should_maintain_parameters(max_path)):
                         self._set_param_value(max_path, wl_max)
             except (ValueError, SyntaxError):
                 pass  # Skip if parsing fails
 
-    def should_maintain_parameters(self):
-        """Check if current parameters should be maintained when switching files"""
-        return self.maintain_params_checkbox.isChecked()
+    def should_maintain_parameters(self, parameter_path=None):
+        """Check if current parameters should be maintained when switching files
+        
+        Args:
+            parameter_path (str, optional): Specific parameter path to check.
+                                          If None, returns overall maintenance status.
+        
+        Returns:
+            bool: True if parameter(s) should be maintained
+        """
+        if not self.maintain_params_checkbox.isChecked():
+            return False
+        
+        # If no specific parameter path is given, check overall status
+        if parameter_path is None:
+            return True
+        
+        # Get currently selected items in the parameter tree
+        selected_items = self.param_tree.selectedItems()
+        
+        # If no items are selected, maintain all parameters
+        if not selected_items:
+            return True
+        
+        # If items are selected, only maintain the selected parameters
+        # Check if the given parameter_path matches any selected item
+        for item in selected_items:
+            # Get the full path of the selected item
+            item_path = self._get_parameter_path(item)
+            if item_path == parameter_path:
+                return True
+        
+        return False
+
+    def _get_parameter_path(self, item):
+        """Get the full parameter path from a parameter tree item"""
+        path_parts = []
+        current_item = item
+        
+        # Walk up the tree to build the full path
+        while current_item is not None:
+            # Get the parameter name from the item
+            if hasattr(current_item, 'param'):
+                param_name = current_item.param.name()
+                path_parts.insert(0, param_name)
+            current_item = current_item.parent()
+        
+        # Join with dots to create the path
+        return '.'.join(path_parts) if path_parts else None
+
+    def get_selected_parameter_paths(self):
+        """Get the paths of all currently selected parameters
+        
+        Returns:
+            list: List of parameter paths that are currently selected
+        """
+        selected_items = self.param_tree.selectedItems()
+        selected_paths = []
+        
+        for item in selected_items:
+            path = self._get_parameter_path(item)
+            if path:
+                selected_paths.append(path)
+        
+        return selected_paths
 
     def update_parameter_status(self, filename=None, is_file_specific=False):
         """Update the parameter status label"""
         if self.should_maintain_parameters():
+            selected_paths = self.get_selected_parameter_paths()
+            
             # Show that parameters are being maintained
             if filename:
-                self.param_status_label.setText(f"Maintaining parameters for: {os.path.basename(filename)}")
+                if selected_paths:
+                    self.param_status_label.setText(f"Maintaining {len(selected_paths)} selected parameters for: {os.path.basename(filename)}")
+                else:
+                    self.param_status_label.setText(f"Maintaining all parameters for: {os.path.basename(filename)}")
             else:
-                self.param_status_label.setText("Maintaining current parameters")
+                if selected_paths:
+                    self.param_status_label.setText(f"Maintaining {len(selected_paths)} selected parameters")
+                else:
+                    self.param_status_label.setText("Maintaining all current parameters")
             self.param_status_label.setStyleSheet("QLabel { color: #FF9800; background-color: #FFF3E0; padding: 3px; border-radius: 3px; font-weight: bold; }")
         elif is_file_specific and filename:
             self.param_status_label.setText(f"File-specific: {os.path.basename(filename)}")

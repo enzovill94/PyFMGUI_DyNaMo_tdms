@@ -57,8 +57,23 @@ def process_single_file_concurrent(filepath, params, use_nn=False, nn_threshold=
         if not params:
             return (filepath, None, "No analysis parameters provided")
         
-        # Run the traditional analysis
-        result = process_single_file(filepath, params, save_plots=False)
+        # Check file size - skip extremely large files that might cause memory issues
+        try:
+            file_size = os.path.getsize(filepath)
+            if file_size > 500 * 1024 * 1024:  # 500 MB limit
+                return (filepath, None, f"File too large: {file_size / (1024*1024):.1f} MB (limit: 500 MB)")
+            elif file_size < 1024:  # Less than 1 KB
+                return (filepath, None, f"File too small: {file_size} bytes")
+        except OSError as e:
+            return (filepath, None, f"Cannot access file: {str(e)}")
+        
+        # Run the traditional analysis directly without signal timeout
+        # (ProcessPoolExecutor already handles timeouts at the pool level)
+        try:
+            result = process_single_file(filepath, params, save_plots=False)
+        except Exception as e:
+            # If analysis fails, return error and continue
+            return filepath, None, f"Analysis failed: {str(e)}"
         
         if result:
             # Add neural network analysis if enabled
@@ -131,8 +146,12 @@ def process_single_file_concurrent(filepath, params, use_nn=False, nn_threshold=
             # Analysis returned no results
             return (filepath, None, "Analysis returned no results")
             
+    except TimeoutError:
+        return (filepath, None, "Analysis timed out after 4 minutes")
     except ImportError as e:
         return (filepath, None, f"Import error: {str(e)}. Make sure tether_script.py is in the Python path.")
+    except MemoryError:
+        return (filepath, None, "Analysis failed: Out of memory")
     except Exception as e:
         # Capture full error traceback for debugging
         error_msg = f"Analysis failed: {str(e)}\n{traceback.format_exc()}"
@@ -244,13 +263,16 @@ class ConcurrentTetherProcessor:
                     for filepath, params in valid_pairs
                 }
                 
+                # Use longer timeout per file for robust processing (10 minutes)
+                file_timeout = 600  # 10 minutes per file (was 5 minutes)
+                
                 # Process completed tasks as they finish
-                for future in concurrent.futures.as_completed(future_to_filepath):
+                for future in concurrent.futures.as_completed(future_to_filepath, timeout=file_timeout * total_files):
                     filepath = future_to_filepath[future]
                     completed_count += 1
                     
                     try:
-                        # Get the result
+                        # Get the result without individual timeout (let ProcessPoolExecutor handle it)
                         result_filepath, analysis_result, error_message = future.result()
                         
                         if error_message:
@@ -275,13 +297,27 @@ class ConcurrentTetherProcessor:
                             progress_callback(completed_count, total_files)
                             
                     except Exception as e:
-                        # Handle future execution errors
+                        # Handle any processing errors (including timeouts)
                         if error_callback:
-                            error_callback(filepath, f"Future execution error: {str(e)}")
-                        print(f"✗ Future execution error for {os.path.basename(filepath)}: {str(e)}")
+                            error_callback(filepath, f"Processing error: {str(e)}")
+                        print(f"✗ Processing error for {os.path.basename(filepath)}: {str(e)}")
         
+        except concurrent.futures.TimeoutError:
+            print("✗ Overall batch timeout: Some files may still be processing")
+            # Cancel remaining futures
+            for future in future_to_filepath.keys():
+                if not future.done():
+                    future.cancel()
+                    cancelled_filepath = future_to_filepath[future]
+                    if error_callback:
+                        error_callback(cancelled_filepath, "Analysis cancelled due to batch timeout")
+                    print(f"✗ Cancelled analysis for {os.path.basename(cancelled_filepath)}")
+            
+            if error_callback:
+                error_callback("BatchTimeout", f"Batch processing timed out after {file_timeout * total_files} seconds")
         except Exception as e:
-            print(f"Concurrent processing error: {str(e)}")
+            print(f"✗ Concurrent processing error: {str(e)}")
+            traceback.print_exc()
             if error_callback:
                 error_callback("ProcessPool", f"Concurrent processing failed: {str(e)}")
         

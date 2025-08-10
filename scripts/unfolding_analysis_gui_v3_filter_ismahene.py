@@ -268,7 +268,7 @@ class TetherAnalysisGUI(QMainWindow):
         
     def setupUI(self):
         """Setup the user interface"""
-        title = "Tether Analysis GUI V3 with Neural Networks"
+        title = "FS Software peak finder"
         if self.nn_enabled:
             title += " (NN Active)"
         else:

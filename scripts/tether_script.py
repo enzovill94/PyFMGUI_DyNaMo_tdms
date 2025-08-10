@@ -241,7 +241,7 @@ def calculate_velocity(displacement_um, rel_time):
     slope, intercept, _, _, _= linregress(rel_time, displacement_um)
     return slope
 
-def find_plateaus(x, y, params=None, dt=1e-3):
+def find_plateaus(x, y, params=None, dt=1e-3): 
     """
     Identify plateaus in 1D data where the first derivative is close to 0.
     
@@ -282,7 +282,7 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     dx =np.abs(x[0] - x[1])
     if dx == 0: 
         #shift to the left 
-        dx = np.abs(x[-2] - x[-3])
+        dx = np.abs(x[-3] - x[-4])
 
     print(f'Pl_threshold: {final_params["pl_threshold"]:.2e} N')
     print(f'total distance: {dx * len(y):.2e} m, dx: {dx:.2e} m')
@@ -336,6 +336,7 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     is_flat = dy_abs_sav_analysis < final_params['pl_threshold']
     
     plateaus = []
+    ruptures = []
     start = None
 
     for i, flat in enumerate(is_flat):
@@ -361,7 +362,29 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         plateaus = plateaus[-final_params['last_num_plateaus']:]
     
     print(f'Plateaus after filtering (last {final_params["last_num_plateaus"]}): {len(plateaus)}')
-    
+
+    # get the index of detachment which is between plateaus
+    # Get the end index of the first plateau and the start index of the next plateau (if available)
+    if len(plateaus) >= 2:
+        for i in range(len(plateaus) - 1):
+            first_plateau_end = plateaus[i][1]
+            next_plateau_start = plateaus[i + 1][0]
+            ruptures.append((first_plateau_end, next_plateau_start))
+    else:
+        ruptures.append((None, None))
+
+    # calculate ruptures slope
+    rupture_slopes = []
+    for start, end in ruptures:
+        if start is not None and end is not None:
+            x_slice = x_analysis[start:end]
+            y_slice = y_analysis[start:end]
+            if end - start > 1 and len(np.unique(x_slice)) > 1:
+                slope, _, _, _, _ = linregress(x_slice, y_slice)
+                rupture_slopes.append(slope)
+            else:
+                rupture_slopes.append(np.nan)
+
     # Calculate plateau statistics
     plateau_avg_idx_arr = []
     plateau_delta_avg_arr = []
@@ -431,13 +454,19 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         'start': [start for start, _ in plateaus],
         'end': [end for _, end in plateaus],
         'plateau_avg_idx': plateau_avg_idx_arr,
-        'delta_time': [plateau_avg_idx * dt for plateau_avg_idx in plateau_avg_idx_arr],
+        'delta_time': [int((end- start)) * dt  for start, end in plateaus],
         'mean dN/dt': plateau_derivatives,
         'velocity_calc_um_s': [calculate_velocity(x[start:end], dt_arr[start:end]) for start, end in plateaus],
         'plateau_slope': plateau_slopes,
-        'tether_lifetime_m':[plateau_avg_idx * dx for plateau_avg_idx in plateau_avg_idx_arr],
-        'tether_lifetime_s': [(end - start) * dt for start, end in plateaus],
+        'tether_lifetime_m': [(int(((end- start) * 0.9)) + idx_max) * dx  for start, end in plateaus], # 90 percent of plateau length
+        'tether_lifetime_s': [(int(((end- start) * 0.9)) + idx_max) * dt  for start, end in plateaus],
         'average_velocity': velocity_um_s,
+        'idx_max': idx_max,
+        'ruptures_start': [int(ruptures[i][0] *0.8) if i < len(ruptures) else None for i in range(len(plateaus))],
+        'ruptures_end': [int(ruptures[i][1] *1.2) if i < len(ruptures) else None for i in range(len(plateaus))],
+        # Pad rupture_slopes to match the number of plateaus
+        'rupture_slope': rupture_slopes + [np.nan] * (len(plateaus) - len(rupture_slopes)),
+        'max_force': y[idx_max],
     })
 
     # Create dataframe of data for plotting
@@ -471,7 +500,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
     print(f"\nProcessing file: {os.path.basename(filename)}")
     
     # Load file
-    file = loadfile(filename, hs3_bool=True)
+    file = loadfile(filename)
     filemetadata = file.filemetadata
     
     # Get file parameters
@@ -596,7 +625,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
         tilt_ret_deflection_N = correct_tilt(ret_piezo, tilt_ret_deflection_N, max_offset, min_offset)
         print(f"  Second baseline correction applied using same offsets: max={max_offset}, min={min_offset}")
     
-    # Find contact point
+    # Find contact point 
     index_first_positive = find_first_positive(tilt_ret_deflection_N)
     first_positive_displacement = ret_piezo[index_first_positive]
     ret_corrected_displacement = ret_piezo - first_positive_displacement
@@ -609,6 +638,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
     displacement = ret_corrected_displacement[index_first_positive:]
     rel_time = np.arange(len(displacement)) * relative_SR_ret
     
+     # add case structure to choose what method used for analysis
     # Find plateaus
     plateaus, df_plat, df_data, velocity_calc_um_s = find_plateaus(displacement, defl_savitz, params, dt=relative_SR_ret)
     

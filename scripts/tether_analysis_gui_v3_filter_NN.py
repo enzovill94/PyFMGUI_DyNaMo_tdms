@@ -67,7 +67,7 @@ except ImportError as e:
     print("   Standard plateau detection will be used")
 
 class BatchAnalysisProgressDialog(QProgressDialog):
-    """Custom progress dialog for batch analysis operations"""
+    """Custom progress dialog for batch analysis operations with cancellation support"""
     
     def __init__(self, title="Batch Analysis Progress", parent=None):
         super().__init__(parent)
@@ -81,6 +81,14 @@ class BatchAnalysisProgressDialog(QProgressDialog):
         self.setAutoReset(False)
         self.resize(400, 120)
         
+        # Enable cancellation
+        self.setCancelButtonText("Cancel Analysis")
+        self.setMinimumDuration(0)  # Show immediately
+        
+        # Track cancellation state
+        self.cancelled = False
+        self.canceled.connect(self.on_cancelled)
+        
         # Center the dialog
         if parent:
             parent_geo = parent.geometry()
@@ -88,13 +96,25 @@ class BatchAnalysisProgressDialog(QProgressDialog):
             y = parent_geo.y() + (parent_geo.height() - self.height()) // 2
             self.move(x, y)
     
+    def on_cancelled(self):
+        """Handle cancellation by user"""
+        self.cancelled = True
+        self.setLabelText("Cancelling analysis...")
+        print("User requested cancellation of batch analysis")
+    
+    def is_cancelled(self):
+        """Check if analysis has been cancelled"""
+        return self.cancelled
+    
     def update_progress(self, current, total, message="Processing..."):
         """Update progress with current/total and custom message"""
         if total > 0:
             percentage = int((current / total) * 100)
             self.setValue(percentage)
-            self.setLabelText(f"{message}\nProgress: {current}/{total} files ({percentage}%)")
+            if not self.cancelled:
+                self.setLabelText(f"{message}\nProgress: {current}/{total} files ({percentage}%)")
         QApplication.processEvents()
+        return not self.cancelled  # Return False if cancelled
     
     def set_final_message(self, message):
         """Set final completion message"""
@@ -234,7 +254,7 @@ class TetherAnalysisGUI(QMainWindow):
         if NN_AVAILABLE:
             try:
                 self.nn_analysis = TetherAnalysisWithNN()
-                self.nn_enabled = True
+                self.nn_enabled = False # Disable NN features
                 print("✓ Neural Network plateau detector initialized successfully")
             except Exception as e:
                 print(f"⚠️ Could not initialize neural network analysis: {e}")
@@ -2132,6 +2152,10 @@ Current Performance:
         - Shift+click to select range of files
         - G/B keys work on all selected files
         """
+        # Initialize index mapping cache
+        self._index_to_row_cache = {}
+        self._cache_needs_update = True
+        
         # Define columns for file information
         headers = ['Filename', 'Status', 'Date Taken', 'Date Modified', 'Size (KB)', 'Calc Vel (μm/s)', 'Analysis Status']
         self.file_table.setColumnCount(len(headers))
@@ -2144,13 +2168,13 @@ Current Performance:
         # Enable sorting with proper index tracking
         self.file_table.setSortingEnabled(True)
         
-        # Connect header double-click to restore original order
+        # Connect header signals to invalidate cache when sorting
         header = self.file_table.horizontalHeader()
+        header.sectionClicked.connect(self._invalidate_index_cache)
         header.sectionDoubleClicked.connect(self.restore_original_order)
         
         # Set table properties
         self.file_table.setAlternatingRowColors(True)
-        self.file_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.file_table.setEditTriggers(QTableWidget.NoEditTriggers)
         
         # Set custom selection colors (darker blue)
@@ -2205,17 +2229,38 @@ Current Performance:
             return row
     
     def get_table_row_from_file_index(self, file_index):
-        """Get the current table row for a given original file index"""
+        """Get the current table row for a given original file index - optimized version"""
         try:
-            for row in range(self.file_table.rowCount()):
-                filename_item = self.file_table.item(row, 0)
-                if filename_item and filename_item.data(Qt.UserRole) == file_index:
-                    return row
-            # Fallback: assume file_index == row (for backwards compatibility)
-            return file_index
+            # Fast path: if sorting is disabled, file_index should equal row number
+            if not self.file_table.isSortingEnabled():
+                if 0 <= file_index < self.file_table.rowCount():
+                    return file_index
+            
+            # Build index mapping cache if it doesn't exist or is stale
+            if not hasattr(self, '_index_to_row_cache') or self._cache_needs_update:
+                self._build_index_to_row_cache()
+            
+            # Use cached mapping for O(1) lookup
+            return self._index_to_row_cache.get(file_index, file_index)
+            
         except Exception as e:
             print(f"Warning: Could not get table row from file index {file_index}: {e}")
             return file_index
+    
+    def _build_index_to_row_cache(self):
+        """Build a cache mapping file indices to table rows for fast lookup"""
+        self._index_to_row_cache = {}
+        for row in range(self.file_table.rowCount()):
+            filename_item = self.file_table.item(row, 0)
+            if filename_item:
+                stored_index = filename_item.data(Qt.UserRole)
+                if stored_index is not None:
+                    self._index_to_row_cache[stored_index] = row
+        self._cache_needs_update = False
+    
+    def _invalidate_index_cache(self):
+        """Mark the index cache as needing update (call when table is sorted)"""
+        self._cache_needs_update = True
     
     def select_row_preserve_scroll(self, row):
         """Select a row while preserving horizontal scroll position"""
@@ -2225,6 +2270,9 @@ Current Performance:
         # Store current horizontal scroll position
         horizontal_scrollbar = self.file_table.horizontalScrollBar()
         current_horizontal_pos = horizontal_scrollbar.value()
+        
+        # Clear current selection first to prevent conflicts
+        self.file_table.clearSelection()
         
         # Select the row (this will trigger scrolling)
         self.file_table.selectRow(row)
@@ -2237,6 +2285,33 @@ Current Performance:
         
         # Restore horizontal scroll position
         horizontal_scrollbar.setValue(current_horizontal_pos)
+        
+        # Ensure the selection is properly set and visible
+        self.file_table.setCurrentCell(row, 0)
+    
+    def ensure_selection_sync(self):
+        """Ensure the table selection matches the current file index"""
+        try:
+            # Give the table time to finish any sorting operations
+            QApplication.processEvents()
+            
+            expected_row = self.get_table_row_from_file_index(self.index)
+            current_selected_rows = [item.row() for item in self.file_table.selectionModel().selectedRows()]
+            
+            print(f"DEBUG: ensure_selection_sync - file index: {self.index}, expected row: {expected_row}, current selection: {current_selected_rows}")
+            
+            if not current_selected_rows or current_selected_rows[0] != expected_row:
+                # Selection is out of sync, fix it
+                print(f"DEBUG: Fixing selection sync - moving to row {expected_row} for file index {self.index}")
+                self.select_row_preserve_scroll(expected_row)
+                
+                # Verify the fix worked
+                QApplication.processEvents()
+                new_selected_rows = [item.row() for item in self.file_table.selectionModel().selectedRows()]
+                print(f"DEBUG: After sync fix - new selection: {new_selected_rows}")
+                
+        except Exception as e:
+            print(f"Warning: Could not sync selection: {e}")
     
     def extract_date_from_filename(self, filename):
         """Extract date taken from filename timestamp if available"""
@@ -2262,11 +2337,23 @@ Current Performance:
     
     def on_file_table_click(self, row, column):
         """Handle file table selection with proper index mapping"""
+        # Check if this is a multi-selection operation (Ctrl/Cmd key held)
+        selected_rows = [item.row() for item in self.file_table.selectionModel().selectedRows()]
+        
+        # If multiple rows are selected, don't interfere with multi-selection
+        if len(selected_rows) > 1:
+            print(f"DEBUG: Multi-selection detected ({len(selected_rows)} rows), not changing current file")
+            return
+        
         # Save parameters for previous file
         self.save_parameters_for_current_file()
         
         # Get the original file index from the clicked row
         self.index = self.get_file_index_from_table_row(row)
+        
+        # Only sync selection for single-selection operations
+        # Don't call ensure_selection_sync() here as it interferes with multi-selection
+        
         # Clear previous analysis result
         self.current_analysis_result = None
         
@@ -2432,6 +2519,9 @@ Current Performance:
         
         # Re-enable sorting
         self.file_table.setSortingEnabled(sorting_enabled)
+        
+        # Invalidate cache since table content changed
+        self._invalidate_index_cache()
                  
     def file_good(self):
         """Mark current file(s) as good - supports multiple selection"""
@@ -2462,9 +2552,10 @@ Current Performance:
         
         if marked_count == 1:
             self.status_label.setText("File marked as GOOD")
-            # Only auto-advance if single file was marked
+            # Only auto-advance if single file was marked and it's the current file
             if len(selected_file_indices) == 1 and selected_file_indices[0] == self.index:
-                self.file_next()
+                # Small delay to let the table finish sorting before navigating
+                QTimer.singleShot(50, self.file_next)
         else:
             self.status_label.setText(f"{marked_count} files marked as GOOD")
             
@@ -2497,9 +2588,10 @@ Current Performance:
         
         if marked_count == 1:
             self.status_label.setText("File marked as BAD")
-            # Only auto-advance if single file was marked
+            # Only auto-advance if single file was marked and it's the current file
             if len(selected_file_indices) == 1 and selected_file_indices[0] == self.index:
-                self.file_next()
+                # Small delay to let the table finish sorting before navigating
+                QTimer.singleShot(50, self.file_next)
         else:
             self.status_label.setText(f"{marked_count} files marked as BAD")
     
@@ -2507,17 +2599,42 @@ Current Performance:
         """Update file status in the table using correct row mapping"""
         if hasattr(self, 'file_data') and file_index < len(self.file_data):
             self.file_data[file_index]['status'] = status
-            # Find the correct table row for this file index
+            
+            # Use optimized row lookup with cache
             table_row = self.get_table_row_from_file_index(file_index)
+            
             # Temporarily disable sorting to prevent row movement during update
             sorting_enabled = self.file_table.isSortingEnabled()
             self.file_table.setSortingEnabled(False)
-            # Update the status column in the table
-            status_item = QTableWidgetItem(status)
-            status_item.setBackground(color)
-            self.file_table.setItem(table_row, 1, status_item)
-            # Re-enable sorting
-            self.file_table.setSortingEnabled(sorting_enabled)
+            
+            try:
+                # Update the status column in the table
+                status_item = QTableWidgetItem(status)
+                status_item.setBackground(color)
+                self.file_table.setItem(table_row, 1, status_item)
+                
+                # If this is the current file, update the selection to follow it
+                if file_index == self.index:
+                    # Re-enable sorting first so the table can sort
+                    self.file_table.setSortingEnabled(sorting_enabled)
+                    
+                    # Give the table time to resort
+                    QApplication.processEvents()
+                    
+                    # Find the new row position after sorting
+                    new_table_row = self.get_table_row_from_file_index(file_index)
+                    
+                    # Re-select the row in its new position
+                    self.select_row_preserve_scroll(new_table_row)
+                    
+                    return  # Early return since we already re-enabled sorting
+                    
+            finally:
+                # Re-enable sorting if we haven't already
+                if not sorting_enabled:
+                    self.file_table.setSortingEnabled(False)
+                else:
+                    self.file_table.setSortingEnabled(True)
             
     def file_next(self):
         """Navigate to next file in current table order (respects sorting)"""
@@ -2526,17 +2643,30 @@ Current Performance:
             # Save parameters for current file
             self.save_parameters_for_current_file()
             
-            # Get current table row for the current file index
+            # Ensure we're working with current table state after any sorting
+            QApplication.processEvents()
+            
+            # Get current table row for the current file index (after any sorting)
             current_table_row = self.get_table_row_from_file_index(self.index)
+            
+            print(f"DEBUG: Current file index: {self.index}, current table row: {current_table_row}")
             
             # Move to next row in the table (visual order)
             next_table_row = (current_table_row + 1) % self.file_table.rowCount()
             
             # Get the file index for the next table row
-            self.index = self.get_file_index_from_table_row(next_table_row)
+            new_file_index = self.get_file_index_from_table_row(next_table_row)
             
-            # Select the new row
+            print(f"DEBUG: Moving to next table row: {next_table_row}, new file index: {new_file_index}")
+            
+            # Update the current index
+            self.index = new_file_index
+            
+            # Select the new row and ensure it stays selected
             self.select_row_preserve_scroll(next_table_row)
+            
+            # Double-check that selection is correct after any automatic sorting
+            QTimer.singleShot(10, self.ensure_selection_sync)
             
             # Clear previous analysis result
             self.current_analysis_result = None
@@ -2557,17 +2687,30 @@ Current Performance:
             # Save parameters for current file
             self.save_parameters_for_current_file()
             
-            # Get current table row for the current file index
+            # Ensure we're working with current table state after any sorting
+            QApplication.processEvents()
+            
+            # Get current table row for the current file index (after any sorting)
             current_table_row = self.get_table_row_from_file_index(self.index)
+            
+            print(f"DEBUG: Current file index: {self.index}, current table row: {current_table_row}")
             
             # Move to previous row in the table (visual order)
             prev_table_row = (current_table_row - 1) % self.file_table.rowCount()
             
             # Get the file index for the previous table row
-            self.index = self.get_file_index_from_table_row(prev_table_row)
+            new_file_index = self.get_file_index_from_table_row(prev_table_row)
             
-            # Select the new row
+            print(f"DEBUG: Moving to prev table row: {prev_table_row}, new file index: {new_file_index}")
+            
+            # Update the current index
+            self.index = new_file_index
+            
+            # Select the new row and ensure it stays selected
             self.select_row_preserve_scroll(prev_table_row)
+            
+            # Double-check that selection is correct after any automatic sorting
+            QTimer.singleShot(10, self.ensure_selection_sync)
             
             # Clear previous analysis result
             self.current_analysis_result = None
@@ -2581,12 +2724,13 @@ Current Performance:
             print("DEBUG: Cannot navigate - no files loaded")
             self.status_label.setText("No files loaded to navigate")
               
-    def update_analysis_status(self, file_index, status):
+    def update_analysis_status(self, file_index, status, table_row=None):
         """Update analysis status in the table using correct row mapping"""
         if hasattr(self, 'file_data') and file_index < len(self.file_data):
             self.file_data[file_index]['analysis_status'] = status
-            # Find the correct table row for this file index
-            table_row = self.get_table_row_from_file_index(file_index)
+            # Use provided table row or find it if not provided
+            if table_row is None:
+                table_row = self.get_table_row_from_file_index(file_index)
             # Temporarily disable sorting to prevent row movement during update
             sorting_enabled = self.file_table.isSortingEnabled()
             self.file_table.setSortingEnabled(False)
@@ -2720,11 +2864,39 @@ Current Performance:
             
         # Check if we should maintain current parameters
         if hasattr(self.param_widget, 'should_maintain_parameters') and self.param_widget.should_maintain_parameters():
-            # Keep current parameters, don't load from file
-            current_file = self.file_path[self.index]
-            self.param_widget.update_parameter_status(current_file, is_file_specific=False)
-            print(f"Maintaining current parameters for {os.path.basename(current_file)}")
-            return
+            # Check if any parameters are selected for selective maintenance
+            selected_paths = self.param_widget.get_selected_parameter_paths()
+            
+            if selected_paths:
+                # Selective maintenance mode: load new parameters but maintain selected ones
+                try:
+                    current_file = self.file_path[self.index]
+                    file_params = self.get_file_parameters(current_file)
+                    
+                    # Temporarily block parameter change signals to prevent double analysis
+                    self.param_widget.blockSignals(True)
+                    
+                    # Update parameter widget with selective maintenance
+                    self.param_widget.setParameters(file_params, selective_maintain=True)
+                    
+                    # Re-enable signals
+                    self.param_widget.blockSignals(False)
+                    
+                    self.param_widget.update_parameter_status(current_file, is_file_specific=False)
+                    print(f"Maintaining selected parameters {selected_paths} for {os.path.basename(current_file)}")
+                    return
+                    
+                except Exception as e:
+                    print(f"Error loading parameters with selective maintenance: {e}")
+                    # Re-enable signals on error
+                    self.param_widget.blockSignals(False)
+                    return
+            else:
+                # Global maintenance mode: keep all current parameters, don't load from file
+                current_file = self.file_path[self.index]
+                self.param_widget.update_parameter_status(current_file, is_file_specific=False)
+                print(f"Maintaining all current parameters for {os.path.basename(current_file)}")
+                return
             
         try:
             current_file = self.file_path[self.index]
@@ -3315,8 +3487,9 @@ Current Performance:
         
     def setup_plateau_table(self):
         """Setup the plateau table with appropriate columns"""
-        # Define columns - added 'Include' column for selection
-        headers = ['Include', 'Plateau #', 'Avg Force (N)', 'ΔAvg (N)', 'ΔTime (s)', 'x̄(dy/dx)', 'Slope', 'Vel (μm/s)']
+        # Define columns - moved rupture slope between plateau slope and velocity
+        headers = ['Include', 'Plateau #', 'Avg Force (N)', 'ΔAvg (N)', 'ΔTime (s)', 'x̄(dN/dm)', 'Pl_Slope(dN/dm)', 'Rupture Slope(dN/dm)', 'Vel (μm/s)', 
+                  'Tether Life (m)', 'Tether Life (s)', 'Avg Velocity (μm/s)']
         self.plateau_table.setColumnCount(len(headers))
         self.plateau_table.setHorizontalHeaderLabels(headers)
         
@@ -3343,6 +3516,8 @@ Current Performance:
             return
             
         df_plat = result['df_plat']
+        print(f"DEBUG: update_plateau_table - df_plat columns: {df_plat.columns.tolist()}")
+        print(f"DEBUG: update_plateau_table - df_plat shape: {df_plat.shape}")
         self.plateau_table.setRowCount(len(df_plat))
         
         # Get current file identifier for plateau selection storage
@@ -3362,48 +3537,92 @@ Current Performance:
                 selections = selections[:len(df_plat)]
             self.plateau_selections[current_file] = selections
         
+
+        
         for row, (i, data) in enumerate(df_plat.iterrows()):
-            # Include checkbox
-            checkbox = QCheckBox()
-            checkbox.setChecked(selections[row])
-            checkbox.stateChanged.connect(lambda state, r=row, f=current_file: self.on_plateau_selection_changed(r, f, state == 2))
-            self.plateau_table.setCellWidget(row, 0, checkbox)
-            
-            # Plateau number
-            self.plateau_table.setItem(row, 1, QTableWidgetItem(str(int(data['plateaus']))))
-            
-            # Average force (in scientific notation)
-            avg_force = QTableWidgetItem(f"{data['plateau_avg']:.2e}")
-            self.plateau_table.setItem(row, 2, avg_force)
-            
-            # Delta average
-            delta_avg = QTableWidgetItem(f"{data['delta_avg']:.2e}")
-            self.plateau_table.setItem(row, 3, delta_avg)
-            
-            # Delta time
-            delta_time = QTableWidgetItem(f"{data['delta_time']:.3f}")
-            self.plateau_table.setItem(row, 4, delta_time)
-            
-            # Mean dy/dx (derivative) in scientific notation
-            if 'mean dN/dt' in data:
-                mean_dNdt = QTableWidgetItem(f"{data['mean dN/dt']:.2e}")
-                self.plateau_table.setItem(row, 5, mean_dNdt)
-            else:
-                self.plateau_table.setItem(row, 5, QTableWidgetItem("N/A"))
-            
-            # Plateau slope in scientific notation
-            if 'plateau_slope' in data:
-                plateau_slope = QTableWidgetItem(f"{data['plateau_slope']:.2e}")
-                self.plateau_table.setItem(row, 6, plateau_slope)
-            else:
-                self.plateau_table.setItem(row, 6, QTableWidgetItem("N/A"))
-            
-            # Calculated velocity for this plateau
-            if 'velocity_calc_um_s' in data:
-                velocity_calc = QTableWidgetItem(f"{data['velocity_calc_um_s']:.1f}")
-                self.plateau_table.setItem(row, 7, velocity_calc)
-            else:
-                self.plateau_table.setItem(row, 7, QTableWidgetItem("N/A"))
+            try:
+                # Include checkbox
+                checkbox = QCheckBox()
+                checkbox.setChecked(selections[row])
+                checkbox.stateChanged.connect(lambda state, r=row, f=current_file: self.on_plateau_selection_changed(r, f, state == 2))
+                self.plateau_table.setCellWidget(row, 0, checkbox)
+                
+                # Plateau number
+                self.plateau_table.setItem(row, 1, QTableWidgetItem(str(int(data['plateaus']))))
+                
+                # Average force (in scientific notation)
+                avg_force = QTableWidgetItem(f"{data['plateau_avg']:.2e}")
+                self.plateau_table.setItem(row, 2, avg_force)
+                
+                # Delta average
+                delta_avg = QTableWidgetItem(f"{data['delta_avg']:.2e}")
+                self.plateau_table.setItem(row, 3, delta_avg)
+                
+                # Delta time
+                delta_time = QTableWidgetItem(f"{data['delta_time']:.3f}")
+                self.plateau_table.setItem(row, 4, delta_time)
+                
+                # Mean dy/dx (derivative) in scientific notation
+                if 'mean dN/dt' in data:
+                    mean_dNdt = QTableWidgetItem(f"{data['mean dN/dt']:.2e}")
+                    self.plateau_table.setItem(row, 5, mean_dNdt)
+                else:
+                    self.plateau_table.setItem(row, 5, QTableWidgetItem("N/A"))
+                
+                # Plateau slope in scientific notation
+                if 'plateau_slope' in data:
+                    plateau_slope = QTableWidgetItem(f"{data['plateau_slope']:.2e}")
+                    self.plateau_table.setItem(row, 6, plateau_slope)
+                else:
+                    self.plateau_table.setItem(row, 6, QTableWidgetItem("N/A"))
+                
+                # Rupture slope (moved to column 7, between plateau slope and velocity)
+                if 'rupture_slope' in data and not pd.isna(data['rupture_slope']):
+                    rupture_slope = QTableWidgetItem(f"{data['rupture_slope']:.2e}")
+                    self.plateau_table.setItem(row, 7, rupture_slope)
+                else:
+                    self.plateau_table.setItem(row, 7, QTableWidgetItem("N/A"))
+                
+                # Calculated velocity for this plateau (moved to column 8)
+                if 'velocity_calc_um_s' in data:
+                    velocity_calc = QTableWidgetItem(f"{data['velocity_calc_um_s']:.0f}")
+                    self.plateau_table.setItem(row, 8, velocity_calc)
+                else:
+                    self.plateau_table.setItem(row, 8, QTableWidgetItem("N/A"))
+                
+                # Tether lifetime in meters (moved to column 9)
+                if 'tether_lifetime_m' in data and not pd.isna(data['tether_lifetime_m']):
+                    tether_life_m = QTableWidgetItem(f"{data['tether_lifetime_m']:.2e}")
+                    self.plateau_table.setItem(row, 9, tether_life_m)
+                else:
+                    self.plateau_table.setItem(row, 9, QTableWidgetItem("N/A"))
+                
+                # Tether lifetime in seconds (moved to column 10)
+                if 'tether_lifetime_s' in data and not pd.isna(data['tether_lifetime_s']):
+                    tether_life_s = QTableWidgetItem(f"{data['tether_lifetime_s']:.2e}")
+                    self.plateau_table.setItem(row, 10, tether_life_s)
+                else:
+                    self.plateau_table.setItem(row, 10, QTableWidgetItem("N/A"))
+                
+                # Average velocity (from analysis) (moved to column 11)
+                if 'average_velocity' in data and not pd.isna(data['average_velocity']):
+                    avg_velocity = QTableWidgetItem(f"{data['average_velocity']:.1f}")
+                    self.plateau_table.setItem(row, 11, avg_velocity)
+                else:
+                    self.plateau_table.setItem(row, 11, QTableWidgetItem("N/A"))
+                    
+            except Exception as e:
+                print(f"DEBUG: Error populating row {row}: {e}")
+                print(f"DEBUG: Row data: {data}")
+                # Fill the row with "Error" items to prevent table corruption
+                for col in range(12):  # 12 columns total (Include, Plateau #, Avg Force, ΔAvg, ΔTime, x̄(dN/dm), Pl_Slope, Rupture Slope, Vel, Tether Life m, Tether Life s, Avg Velocity)
+                    if col == 0:
+                        # Include checkbox
+                        checkbox = QCheckBox()
+                        checkbox.setChecked(False)
+                        self.plateau_table.setCellWidget(row, 0, checkbox)
+                    else:
+                        self.plateau_table.setItem(row, col, QTableWidgetItem("Error"))
                 
         # Resize columns to content
         self.plateau_table.resizeColumnsToContents()
@@ -4290,10 +4509,12 @@ Current Performance:
             progress_percent = (completed / total) * 100
             current_file = os.path.basename(self.file_path[min(completed-1, len(self.file_path)-1)]) if completed > 0 else "Starting..."
             
-            # Update both the dialog and status label
-            progress_dialog.update_progress(completed, total, f"Analyzing: {current_file}")
+            # Update both the dialog and status label - and check for cancellation
+            continue_analysis = progress_dialog.update_progress(completed, total, f"Analyzing: {current_file}")
             self.status_label.setText(f"Concurrent analysis progress: {completed}/{total} files ({progress_percent:.1f}%)")
-            QApplication.processEvents()
+            
+            # Return False if user cancelled to stop the analysis
+            return continue_analysis
         
         def error_callback(filepath, error_msg):
             """Handle errors during concurrent processing"""
@@ -4309,38 +4530,87 @@ Current Performance:
                 error_callback=error_callback
             )
             
-            # Update file table and data with results
+            # Check if analysis was cancelled
+            if progress_dialog.is_cancelled():
+                progress_dialog.set_final_message("Analysis Cancelled by User")
+                progress_dialog.close()
+                self.status_label.setText("Batch analysis cancelled by user")
+                return
+            
+            # Close progress dialog IMMEDIATELY before processing results
+            progress_dialog.set_final_message(f"Analysis Complete!\nProcessing {len(analysis_results)} results...")
+            progress_dialog.close()  # Close immediately to improve perceived performance
+            
+            # Process results WITHOUT any GUI updates - store everything in memory first
             processed_files = 0
             failed_files = 0
             
+            print(f"Starting batch results processing for {len(self.file_path)} files...")
+            
+            # Collect all updates in memory first (no GUI operations)
+            velocity_updates = {}
+            status_updates = {}
+            file_data_updates = {}
+            
             for file_index, file_path in enumerate(self.file_path):
+                # Show progress every 200 files (less frequent to reduce overhead)
+                if file_index % 200 == 0:
+                    print(f"Processing file {file_index}/{len(self.file_path)}")
+                    # Update status label to show progress without GUI dialog
+                    self.status_label.setText(f"Processing results: {file_index}/{len(self.file_path)} files...")
+                    QApplication.processEvents()  # Allow GUI to stay responsive
+                
                 if file_path in analysis_results:
                     result = analysis_results[file_path]
                     processed_files += 1
                     
-                    # Store calculated velocity in file_data and update table
+                    # Store calculated velocity for batch update
                     if 'velocity_calc_um_s' in result:
                         vel_calc = result['velocity_calc_um_s']
                         if isinstance(vel_calc, (int, float)) and not np.isnan(vel_calc):
-                            # Store velocity in file_data
-                            if hasattr(self, 'file_data') and file_index < len(self.file_data):
-                                self.file_data[file_index]['calc_ret_vel'] = vel_calc
-                                # Update the velocity table cell (column 5)
-                                table_row = self.get_table_row_from_file_index(file_index)
-                                vel_item = QTableWidgetItem(f"{vel_calc:.1f}")
-                                vel_item.setData(Qt.UserRole, vel_calc)
-                                self.file_table.setItem(table_row, 5, vel_item)
+                            velocity_updates[file_index] = vel_calc
+                            # Store in file_data updates
+                            if file_index not in file_data_updates:
+                                file_data_updates[file_index] = {}
+                            file_data_updates[file_index]['calc_ret_vel'] = vel_calc
                     
-                    # Update analysis status
+                    # Store analysis status for batch update
                     plateau_count = len(result['plateaus']) if result['plateaus'] else 0
-                    self.update_analysis_status(file_index, f"Analyzed ({plateau_count} plateaus)")
+                    status_text = f"Analyzed ({plateau_count} plateaus)"
+                    status_updates[file_index] = status_text
+                    if file_index not in file_data_updates:
+                        file_data_updates[file_index] = {}
+                    file_data_updates[file_index]['analysis_status'] = status_text
                     
                     # Store result for current file if it matches
                     if file_index == self.index:
                         self.current_analysis_result = result
                 else:
                     failed_files += 1
-                    self.update_analysis_status(file_index, "Analysis Failed")
+                    # Store failed status for batch update
+                    status_updates[file_index] = "Analysis Failed"
+                    if file_index not in file_data_updates:
+                        file_data_updates[file_index] = {}
+                    file_data_updates[file_index]['analysis_status'] = "Analysis Failed"
+            
+            print(f"Batch results processing complete! Processed: {processed_files}, Failed: {failed_files}")
+            
+            # Now do a SINGLE batch GUI update with all the collected data
+            self.status_label.setText("Updating GUI with batch results...")
+            QApplication.processEvents()
+            
+            try:
+                # Use the optimized batch update method
+                self.batch_update_analysis_results(
+                    velocity_updates, 
+                    status_updates, 
+                    file_data_updates, 
+                    {},  # No auto-labeling updates
+                    0,   # auto_labeled_good
+                    0    # auto_labeled_bad
+                )
+            except Exception as e:
+                print(f"Error during batch GUI update: {e}")
             
             # Update final status
             success_rate = (processed_files / total_files) * 100 if total_files > 0 else 0
@@ -4351,21 +4621,29 @@ Current Performance:
                 
             self.status_label.setText(final_status)
             
-            # Force table refresh to ensure all values are displayed
-            self.file_table.resizeColumnsToContents()
-            
-            # Update display for the current file if we have results
-            if hasattr(self, 'current_analysis_result') and self.current_analysis_result:
-                self.update_plot_with_analysis(self.current_analysis_result)
-                self.update_results_display(self.current_analysis_result)
-                self.update_plateau_table(self.current_analysis_result)
-                self.update_velocity_indicators(self.current_analysis_result)
-            else:
-                # Run analysis on current file to show something
-                QTimer.singleShot(100, self.run_analysis)
-            
-            # Update results text with concurrent batch analysis summary
-            batch_summary = f"""Concurrent Batch Analysis Complete!
+            # Defer expensive GUI updates until after dialog closes
+            def finalize_gui_updates():
+                try:
+                    # Skip expensive resizeColumnsToContents() for large datasets
+                    # This is the main cause of GUI freezing after batch analysis
+                    if len(self.file_path) < 100:  # Only resize for small datasets
+                        self.file_table.resizeColumnsToContents()
+                    else:
+                        print("Skipping column resize for large dataset (performance)")
+                    
+                    # Update display for the current file if we have results
+                    if hasattr(self, 'current_analysis_result') and self.current_analysis_result:
+                        self.update_plot_with_analysis(self.current_analysis_result)
+                        self.update_results_display(self.current_analysis_result)
+                        self.update_plateau_table(self.current_analysis_result)
+                        self.update_velocity_indicators(self.current_analysis_result)
+                    else:
+                        # Run analysis on current file to show something (only if no result)
+                        if self.file_path and self.index < len(self.file_path):
+                            QTimer.singleShot(100, self.run_analysis)
+                    
+                    # Update results text with concurrent batch analysis summary
+                    batch_summary = f"""Concurrent Batch Analysis Complete!
 
 Directory: {self.root_dir if hasattr(self, 'root_dir') else 'Unknown'}
 Processing Method: Multi-core concurrent (CPU cores)
@@ -4379,18 +4657,23 @@ Current file: {self.index + 1}/{total_files} - {os.path.basename(self.file_path[
 Navigation: Use ↑/↓ to browse analyzed files
 All file-specific parameters have been preserved."""
 
-            self.results_text.setText(batch_summary)
+                    self.results_text.setText(batch_summary)
+                    
+                except Exception as e:
+                    print(f"Error during GUI finalization: {e}")
             
-            # Show completion message and close progress dialog
-            progress_dialog.set_final_message(f"Analysis Complete!\n{processed_files}/{total_files} files processed successfully")
-            QTimer.singleShot(2000, progress_dialog.close)  # Auto-close after 2 seconds
+            # Schedule GUI finalization after dialog closes
+            QTimer.singleShot(500, finalize_gui_updates)
             
         except Exception as e:
             progress_dialog.set_final_message(f"Analysis Failed!\nError: {str(e)}")
-            QTimer.singleShot(3000, progress_dialog.close)  # Auto-close after 3 seconds
+            QTimer.singleShot(100, progress_dialog.close)  # Close immediately on error
             self.status_label.setText(f"Concurrent batch analysis failed: {str(e)}")
             self.results_text.setText(f"Error during concurrent analysis: {str(e)}")
             print(f"Concurrent batch analysis error: {e}")
+        finally:
+            # Ensure dialog always closes even if something goes wrong
+            QTimer.singleShot(1000, lambda: progress_dialog.close() if hasattr(progress_dialog, 'close') else None)
 
     def run_concurrent_batch_analysis(self):
         """Run concurrent batch analysis on all files loaded from the session using multiple CPU cores with NN analysis"""
@@ -4447,9 +4730,12 @@ All file-specific parameters have been preserved."""
             except ValueError:
                 print(f"✗ Failed to analyze {filepath}: {error_message}")
         
-        # Run concurrent analysis with NN support
+        # Run concurrent analysis with NN support and robust error handling
+        analysis_results = {}
         try:
             processor = ConcurrentTetherProcessor()
+            
+            # Simple and robust: just run the analysis directly
             analysis_results = processor.process_files_concurrent(
                 file_param_pairs, 
                 progress_callback=progress_callback,
@@ -4459,112 +4745,141 @@ All file-specific parameters have been preserved."""
                 auto_label=auto_label
             )
             
-            # Process successful results
-            processed_files = 0
-            auto_labeled_good = 0
-            auto_labeled_bad = 0
+            print(f"✓ Concurrent analysis completed: {len(analysis_results)}/{total_files} files processed")
             
-            for filepath, result in analysis_results.items():
-                try:
-                    # Find file index for this filepath
-                    file_index = self.file_path.index(filepath)
-                    
-                    # Handle auto-labeling based on NN results
-                    if auto_label and 'auto_label' in result:
-                        auto_label_status = result['auto_label']
-                        auto_label_reason = result.get('auto_label_reason', 'No reason provided')
-                        
-                        if auto_label_status == 'good':
-                            self.bool_good_curve[file_index] = 1
-                            self.update_file_status(file_index, 'Good', Qt.green)
-                            auto_labeled_good += 1
-                            print(f"✓ Auto-labeled {os.path.basename(filepath)} as GOOD: {auto_label_reason}")
-                        elif auto_label_status == 'bad':
-                            self.bool_good_curve[file_index] = 0
-                            self.update_file_status(file_index, 'Bad', Qt.red)
-                            auto_labeled_bad += 1
-                            print(f"✗ Auto-labeled {os.path.basename(filepath)} as BAD: {auto_label_reason}")
-                    
-                    # Store calculated velocity in file_data and update table
-                    if 'velocity_calc_um_s' in result:
-                        vel_calc = result['velocity_calc_um_s']
-                        if isinstance(vel_calc, (int, float)) and not np.isnan(vel_calc):
-                            # Store velocity in file_data
-                            if hasattr(self, 'file_data') and file_index < len(self.file_data):
-                                self.file_data[file_index]['calc_ret_vel'] = vel_calc
-                                
-                                # Update velocity table cell (column 5)
-                                table_row = self.get_table_row_from_file_index(file_index)
-                                sorting_enabled = self.file_table.isSortingEnabled()
-                                self.file_table.setSortingEnabled(False)
-                                vel_item = QTableWidgetItem(f"{vel_calc:.1f}")
-                                vel_item.setData(Qt.UserRole, vel_calc)
-                                self.file_table.setItem(table_row, 5, vel_item)
-                                self.file_table.setSortingEnabled(sorting_enabled)
-                    
-                    # Update analysis status with NN info
-                    plateau_count = len(result['plateaus']) if result['plateaus'] else 0
-                    nn_count = len(result.get('nn_plateaus', []))
-                    
-                    if use_nn:
-                        status_text = f"Analyzed ({plateau_count} trad, {nn_count} NN plateaus)"
-                    else:
-                        status_text = f"Analyzed ({plateau_count} plateaus)"
-                    
-                    self.update_analysis_status(file_index, status_text)
-                    processed_files += 1
-                    
-                except ValueError:
-                    print(f"Warning: Could not find file index for {filepath}")
-                except Exception as e:
-                    print(f"Warning: Error processing result for {filepath}: {e}")
+        except Exception as e:
+            error_msg = str(e)
+            progress_dialog.set_final_message(f"Analysis Failed!\nError: {error_msg}")
+            QTimer.singleShot(5000, progress_dialog.close)
+            self.status_label.setText(f"Concurrent analysis failed: {error_msg}")
+            print(f"✗ Concurrent analysis error: {error_msg}")
             
-            # Restore original index and load its results
+            # Restore original index on error
             self.index = original_index
             table_row = self.get_table_row_from_file_index(self.index)
             self.select_row_preserve_scroll(table_row)
-            self.load_parameters_for_current_file()
+            return
             
-            # Update display for the current file if we have results
-            current_filepath = self.file_path[self.index]
-            if current_filepath in analysis_results:
-                self.current_analysis_result = analysis_results[current_filepath]
-                self.update_plot_with_analysis(self.current_analysis_result)
-                self.update_results_display(self.current_analysis_result)
-                self.update_plateau_table(self.current_analysis_result)
-                self.update_velocity_indicators(self.current_analysis_result)
-            else:
-                # Run analysis on current file to show something
-                QTimer.singleShot(100, self.run_analysis)
-            
-            # Update final status
-            num_failed = len(failed_files)
-            success_rate = (processed_files / total_files) * 100 if total_files > 0 else 0
-            
-            final_status = f"Concurrent batch analysis complete: {processed_files}/{total_files} files analyzed successfully ({success_rate:.0f}%)"
-            
-            if num_failed > 0:
-                final_status += f", {num_failed} failed"
-            
-            if auto_label:
-                final_status += f" | Auto-labeled: {auto_labeled_good} good, {auto_labeled_bad} bad"
+        # Process successful results using batch updates for efficiency
+        processed_files = 0
+        auto_labeled_good = 0
+        auto_labeled_bad = 0
+        
+        # BATCH PROCESS ALL RESULTS FIRST (no GUI updates during loop)
+        file_index_map = {filepath: idx for idx, filepath in enumerate(self.file_path)}  # O(n) once
+        
+        # Collect all updates first - no GUI operations during this loop
+        velocity_updates = {}
+        status_updates = {}
+        file_data_updates = {}
+        auto_labeling_updates = {}
+        
+        progress_dialog.update_progress(len(analysis_results), total_files, "Processing analysis results...")
+        
+        for filepath, result in analysis_results.items():
+            try:
+                file_index = file_index_map.get(filepath)  # O(1) lookup instead of O(n)
+                if file_index is None:
+                    print(f"Warning: Could not find file index for {filepath}")
+                    continue
                 
-            self.status_label.setText(final_status)
-            
-            # Force table refresh to ensure all velocity values are displayed
-            self.file_table.resizeColumnsToContents()
-            
-            # Generate analysis summary
-            summary = processor.get_analysis_summary(analysis_results)
-            
-            # Calculate NN-specific statistics
-            nn_summary = ""
-            if use_nn:
-                total_nn_plateaus = sum(len(result.get('nn_plateaus', [])) for result in analysis_results.values())
-                files_with_nn_plateaus = sum(1 for result in analysis_results.values() if len(result.get('nn_plateaus', [])) > 0)
-                avg_nn_plateaus = total_nn_plateaus / processed_files if processed_files > 0 else 0
+                # Handle auto-labeling based on NN results (store for batch update)
+                if auto_label and 'auto_label' in result:
+                    auto_label_status = result['auto_label']
+                    auto_label_reason = result.get('auto_label_reason', 'No reason provided')
+                    
+                    if auto_label_status == 'good':
+                        auto_labeling_updates[file_index] = ('good', auto_label_reason)
+                        auto_labeled_good += 1
+                    elif auto_label_status == 'bad':
+                        auto_labeling_updates[file_index] = ('bad', auto_label_reason)
+                        auto_labeled_bad += 1
                 
-                nn_summary = f"""
+                # Store calculated velocity for batch update
+                if 'velocity_calc_um_s' in result:
+                    vel_calc = result['velocity_calc_um_s']
+                    if isinstance(vel_calc, (int, float)) and not np.isnan(vel_calc):
+                        velocity_updates[file_index] = vel_calc
+                        # Store in file_data updates
+                        file_data_updates[file_index] = {'calc_ret_vel': vel_calc}
+                
+                # Store analysis status for batch update
+                plateau_count = len(result['plateaus']) if result['plateaus'] else 0
+                nn_count = len(result.get('nn_plateaus', []))
+                
+                if use_nn:
+                    status_text = f"Analyzed ({plateau_count} trad, {nn_count} NN plateaus)"
+                else:
+                    status_text = f"Analyzed ({plateau_count} plateaus)"
+                
+                status_updates[file_index] = status_text
+                processed_files += 1
+                
+            except Exception as e:
+                print(f"Warning: Error processing result for {filepath}: {e}")
+        
+        # SINGLE BATCH GUI UPDATE - much more efficient
+        progress_dialog.update_progress(len(analysis_results), total_files, "Updating GUI...")
+        try:
+            self.batch_update_analysis_results(
+                velocity_updates, 
+                status_updates, 
+                file_data_updates, 
+                auto_labeling_updates,
+                auto_labeled_good,
+                auto_labeled_bad
+            )
+        except Exception as e:
+            print(f"Warning: Error during batch GUI update: {e}")
+            # Continue even if batch update fails
+        
+        # Restore original index and load its results
+        self.index = original_index
+        table_row = self.get_table_row_from_file_index(self.index)
+        self.select_row_preserve_scroll(table_row)
+        self.load_parameters_for_current_file()
+        
+        # Update display for the current file if we have results
+        current_filepath = self.file_path[self.index]
+        if current_filepath in analysis_results:
+            self.current_analysis_result = analysis_results[current_filepath]
+            self.update_plot_with_analysis(self.current_analysis_result)
+            self.update_results_display(self.current_analysis_result)
+            self.update_plateau_table(self.current_analysis_result)
+            self.update_velocity_indicators(self.current_analysis_result)
+        else:
+            # Run analysis on current file to show something
+            QTimer.singleShot(100, self.run_analysis)
+        
+        # Update final status
+        num_failed = len(failed_files)
+        success_rate = (processed_files / total_files) * 100 if total_files > 0 else 0
+        
+        final_status = f"Concurrent batch analysis complete: {processed_files}/{total_files} files analyzed successfully ({success_rate:.0f}%)"
+        
+        if num_failed > 0:
+            final_status += f", {num_failed} failed"
+        
+        if auto_label:
+            final_status += f" | Auto-labeled: {auto_labeled_good} good, {auto_labeled_bad} bad"
+            
+        self.status_label.setText(final_status)
+        
+        # Force table refresh to ensure all velocity values are displayed
+        self.file_table.resizeColumnsToContents()
+        
+        # Generate analysis summary
+        summary = processor.get_analysis_summary(analysis_results)
+        
+        # Calculate NN-specific statistics
+        nn_summary = ""
+        if use_nn:
+            total_nn_plateaus = sum(len(result.get('nn_plateaus', [])) for result in analysis_results.values())
+            files_with_nn_plateaus = sum(1 for result in analysis_results.values() if len(result.get('nn_plateaus', [])) > 0)
+            avg_nn_plateaus = total_nn_plateaus / processed_files if processed_files > 0 else 0
+            
+            nn_summary = f"""
+
 Neural Network Analysis:
 • NN threshold used: {nn_threshold}
 • Total NN plateaus found: {total_nn_plateaus}
@@ -4575,8 +4890,9 @@ Auto-labeling Results:
 • Files labeled as GOOD: {auto_labeled_good}
 • Files labeled as BAD: {auto_labeled_bad}
 • Auto-labeling rate: {((auto_labeled_good + auto_labeled_bad) / processed_files * 100):.1f}%"""
-            
-            # Update results text with concurrent batch analysis summary
+        
+        # Update results text with concurrent batch analysis summary
+        try:
             processing_method = f"Multi-core concurrent with Neural Networks (threshold={nn_threshold})" if use_nn else "Multi-core concurrent (CPU cores)"
             batch_summary = f"""Concurrent Batch Analysis Complete!
 
@@ -4611,21 +4927,97 @@ Navigation: Use ↑/↓ to browse analyzed files
 All file-specific parameters have been preserved."""
 
             self.results_text.setText(batch_summary)
+        except Exception as e:
+            print(f"Warning: Error updating results text: {e}")
+            # Set a simple completion message instead
+            self.results_text.setText(f"Concurrent batch analysis complete!\n{processed_files}/{total_files} files analyzed successfully.")
             
-            # Show completion message and close progress dialog
+        # Show completion message and close progress dialog
+        try:
             success_rate = (processed_files / total_files) * 100 if total_files > 0 else 0
             progress_dialog.set_final_message(f"Analysis Complete!\n{processed_files}/{total_files} files processed successfully ({success_rate:.1f}%)")
-            QTimer.singleShot(2000, progress_dialog.close)  # Auto-close after 2 seconds
-            
         except Exception as e:
-            progress_dialog.set_final_message(f"Analysis Failed!\nError: {str(e)}")
-            QTimer.singleShot(3000, progress_dialog.close)  # Auto-close after 3 seconds
-            self.status_label.setText(f"Concurrent analysis failed: {str(e)}")
-            print(f"Concurrent analysis error: {e}")
-            # Restore original index on error
-            self.index = original_index
-            table_row = self.get_table_row_from_file_index(self.index)
-            self.select_row_preserve_scroll(table_row)
+            print(f"Warning: Error setting final message: {e}")
+            progress_dialog.set_final_message(f"Analysis Complete!\nProcessed {len(analysis_results)} files")
+        finally:
+            # Always close the progress dialog
+            QTimer.singleShot(2000, progress_dialog.close)  # Auto-close after 2 seconds
+            print(f"✓ Concurrent batch analysis finished: {len(analysis_results)} files processed")
+
+    def batch_update_analysis_results(self, velocity_updates, status_updates, file_data_updates, auto_labeling_updates, auto_labeled_good, auto_labeled_bad):
+        """
+        Efficiently update GUI with batch analysis results using single table operation
+        
+        Parameters:
+            velocity_updates (dict): {file_index: velocity_value}
+            status_updates (dict): {file_index: status_text} 
+            file_data_updates (dict): {file_index: {key: value}}
+            auto_labeling_updates (dict): {file_index: (label, reason)}
+            auto_labeled_good (int): Count of files auto-labeled as good
+            auto_labeled_bad (int): Count of files auto-labeled as bad
+        """
+        try:
+            # Disable table updates during batch operation for performance
+            self.file_table.setUpdatesEnabled(False)
+            sorting_enabled = self.file_table.isSortingEnabled()
+            self.file_table.setSortingEnabled(False)
+            
+            # Batch update file_data structure first
+            if hasattr(self, 'file_data'):
+                for file_index, updates in file_data_updates.items():
+                    if file_index < len(self.file_data):
+                        for key, value in updates.items():
+                            self.file_data[file_index][key] = value
+            
+            # Build index-to-row mapping once for the entire batch (much faster)
+            self._build_index_to_row_cache()
+            
+            # Batch update auto-labeling
+            for file_index, (label_status, reason) in auto_labeling_updates.items():
+                if label_status == 'good':
+                    self.bool_good_curve[file_index] = 1
+                    self.update_file_status(file_index, 'Good', Qt.green)
+                    print(f"✓ Auto-labeled {os.path.basename(self.file_path[file_index])} as GOOD: {reason}")
+                elif label_status == 'bad':
+                    self.bool_good_curve[file_index] = 0
+                    self.update_file_status(file_index, 'Bad', Qt.red)
+                    print(f"✗ Auto-labeled {os.path.basename(self.file_path[file_index])} as BAD: {reason}")
+            
+            # Batch update velocity table cells (column 5)
+            for file_index, velocity in velocity_updates.items():
+                try:
+                    table_row = self._index_to_row_cache.get(file_index, file_index)
+                    if table_row is not None and table_row < self.file_table.rowCount():
+                        vel_item = QTableWidgetItem(f"{velocity:.1f}")
+                        vel_item.setData(Qt.UserRole, velocity)
+                        self.file_table.setItem(table_row, 5, vel_item)
+                except Exception as e:
+                    print(f"Warning: Could not update velocity for file {file_index}: {e}")
+            
+            # Batch update analysis status (column 6)
+            for file_index, status_text in status_updates.items():
+                try:
+                    table_row = self._index_to_row_cache.get(file_index, file_index)
+                    if table_row is not None:
+                        self.file_table.setItem(table_row, 6, QTableWidgetItem(status_text))
+                except Exception as e:
+                    print(f"Warning: Could not update status for file {file_index}: {e}")
+            
+            print(f"✓ Batch GUI update complete: {len(velocity_updates)} velocities, {len(status_updates)} statuses")
+            if auto_labeling_updates:
+                print(f"✓ Auto-labeling complete: {auto_labeled_good} good, {auto_labeled_bad} bad")
+                
+        except Exception as e:
+            print(f"Error during batch GUI update: {e}")
+        finally:
+            # Re-enable table updates and refresh (skip expensive resize for large datasets)
+            self.file_table.setSortingEnabled(sorting_enabled)
+            self.file_table.setUpdatesEnabled(True)
+            # Skip expensive resizeColumnsToContents() for large datasets to prevent GUI freezing
+            if hasattr(self, 'file_path') and len(self.file_path) < 100:
+                self.file_table.resizeColumnsToContents()
+            else:
+                print("Skipping column resize in batch update (performance optimization)")
 
     def load_compound_sessions(self):
         """Load and add multiple session files to the current session"""
