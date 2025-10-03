@@ -3516,8 +3516,8 @@ Current Performance:
             return
             
         df_plat = result['df_plat']
-        print(f"DEBUG: update_plateau_table - df_plat columns: {df_plat.columns.tolist()}")
-        print(f"DEBUG: update_plateau_table - df_plat shape: {df_plat.shape}")
+        # print(f"DEBUG: update_plateau_table - df_plat columns: {df_plat.columns.tolist()}")
+        # print(f"DEBUG: update_plateau_table - df_plat shape: {df_plat.shape}")
         self.plateau_table.setRowCount(len(df_plat))
         
         # Get current file identifier for plateau selection storage

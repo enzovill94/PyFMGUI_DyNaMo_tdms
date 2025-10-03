@@ -295,8 +295,11 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     idx_max = np.argmax(y[:len(y) // 2])
     print(f"Index of maximum deflection: {idx_max}, value: {y[idx_max]:.4e}")
 
+    dt_rel = dt_arr * velocity_um_s
+    print (f'derivative_dt = {dt_rel[-1]:0.4g} µm, relative_dt = {dt:0.4g}')
+
     # Calculate derivative of deflection with respect to time
-    dy = np.gradient(y, dt_arr * velocity_um_s)
+    dy = np.gradient(y, dt_rel)
     dy_smooth = np.abs(dy)
     dy_abs_sav = savitzky_golay_smooth(
         dy_smooth,
