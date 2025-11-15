@@ -1819,7 +1819,7 @@ Ready to analyze TDMS files efficiently!"""
         try:
             if result and 'velocity_metadata' in result and 'velocity_calc_um_s' in result:
                 # Update metadata velocity (from file metadata)
-                vel_meta = result['velocity_metadata']
+                vel_meta = result['velocity_metadata'] 
                 if isinstance(vel_meta, (int, float)) and not np.isnan(vel_meta):
                     self.meta_ret_vel_label.setText(f"Meta Ret Vel: {vel_meta:.1f} μm/s")
                     self.meta_ret_vel_label.setStyleSheet("QLabel { background-color: #E8F0FF; padding: 3px 6px; border-radius: 3px; font-size: 10px; color: black; }")

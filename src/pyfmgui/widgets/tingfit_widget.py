@@ -53,6 +53,10 @@ class TingFitWidget(QtWidgets.QWidget):
         params_layout.addWidget(self.l2, 2)
 
         self.l = pg.GraphicsLayoutWidget()
+
+        # # added by Lorenzo
+        # self.correct_app = self.params.child('General Options').child('Correct App')
+        # self.correct_app.sigValueChanged.connect(self.update)
         
         ## Add 3 plots into the first row (automatic position)
         self.plotItem = pg.PlotItem(lockAspect=True)
@@ -91,6 +95,9 @@ class TingFitWidget(QtWidgets.QWidget):
             filedict = self.session.loaded_files
         else:
             filedict = {self.session.current_file.filemetadata['Entry_filename']:self.session.current_file}
+        if self.params.child('General Options').child('Correct App').value():
+            print('trueDat')
+            logger.info('correct app is true')
         params = get_params(self.params, "TingFit")
         # compute(self.session, params,  self.filedict, "TingFit")
         logger.info('Started ViscoelasticityFit...')
@@ -118,7 +125,7 @@ class TingFitWidget(QtWidgets.QWidget):
         self.pushButton.setEnabled(False) # Prevent user from starting another
         # Update the gui
         self.updatePlots()
-        self.updatePlots()
+        # self.updatePlots()
     
     def changestep(self, step):
         self.session.pbar_widget.set_label_sub_text(step)
@@ -239,12 +246,13 @@ class TingFitWidget(QtWidgets.QWidget):
         vdragcorr = ting_params.child('Correct Viscous Drag').value()
         polyordr = ting_params.child('Poly. Order').value()
         rampspeed = ting_params.child('Ramp Speed').value() / 1e6
+        # print (f'rampspeed: {rampspeed} m/s ')
         contact_offset = ting_params.child('Contact Offset').value() / 1e6
         t0_scaling = ting_params.child('t0').value()
         pts_downsample = ting_params.child('Downsample Pts.').value()
         correct_tilt_flag = analysis_params.child('Correct Tilt').value()
-
-        force_curve = self.current_file.getcurve(current_curve_indx)
+    
+        force_curve = self.current_file.getcurve(current_curve_indx,bool_correct_overshoot = self.params.child('General Options').child('Correct App').value())
         force_curve.preprocess_force_curve(deflection_sens, height_channel)
 
         if self.session.current_file.filemetadata['file_type'] in cts.jpk_file_extensions:

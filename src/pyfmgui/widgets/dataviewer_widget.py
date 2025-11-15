@@ -44,7 +44,9 @@ class DataViewerWidget(QtWidgets.QWidget):
         self.curve_x.sigValueChanged.connect(self.updateCurve)
         self.curve_y = self.params.child('Display Options').child('Curve Y axis')
         self.curve_y.sigValueChanged.connect(self.updateCurve)
-
+        self.correct_app = self.params.child('Display Options').child('Correct App')
+        self.correct_app.sigValueChanged.connect(self.updateCurve)
+        
         self.paramTree = ParameterTree()
         self.paramTree.setParameters(self.params, showTop=False)
 
@@ -150,7 +152,7 @@ class DataViewerWidget(QtWidgets.QWidget):
         show_app0 = self.params.child('Display Options').child('Show App 0').value()
         show_ret = self.params.child('Display Options').child('Show Ret 2').value()
         show_con = self.params.child('Display Options').child('Show Con 1').value()
-
+        self.correct_app = self.params.child('Display Options').child('Correct App')
 
 
         t0 = 0
@@ -164,6 +166,7 @@ class DataViewerWidget(QtWidgets.QWidget):
             ret_data.time = ret_data.time + t_offset
         for i, (seg_id, segment) in enumerate(fc_segments):
             # Only plot if selected in settings
+            # print (f'segment type: {segment.segment_type}, id: {seg_id}')
             if segment.segment_type == "App" and seg_id == 0 and not show_app0:
                 print('hide app0 segment')
                 continue
@@ -177,8 +180,11 @@ class DataViewerWidget(QtWidgets.QWidget):
             x_units = 'm'
             if xkey == "time":
                 x = x + t0
-                t0 = x[-1]
-                x_units = 's'
+                if x.size > 0:
+                    t0 = x[-1]
+                    x_units = 's'
+                else:
+                    print('x has no size')
             y = getattr(segment, ykey)
             self.p1.plot(x, y, pen=(i,n_segments), name=f"{segment.segment_type} {seg_id}")
         self.p1.setLabel('left', ykey, 'm')
@@ -196,7 +202,7 @@ class DataViewerWidget(QtWidgets.QWidget):
                 deflection_sens = self.session.current_file.filemetadata['defl_sens_nmbyV'] / 1e9
             else:
                 deflection_sens = self.session.global_involts
-            force_curve = self.session.current_file.getcurve(idx)
+            force_curve = self.session.current_file.getcurve(idx, bool_correct_overshoot = self.correct_app.value())
             force_curve.preprocess_force_curve(deflection_sens, height_channel)
             if self.session.current_file.filemetadata['file_type'] in cts.jpk_file_extensions:
                 force_curve.shift_height()

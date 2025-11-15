@@ -182,7 +182,7 @@ class TingFitParams(pTypes.GroupParameter):
             {'name': 'Poly. Order', 'type': 'int', 'value':2},
             {'name': 'Ramp Speed', 'type': 'float', 'value':0, 'units': 'um/s'},
             {'name': 'Model Type', 'type': 'list', 'limits': ['analytical', 'numerical']},
-            {'name': 'Estimate V0t & V0r', 'type': 'bool', 'value': False},
+            {'name': 'Estimate V0t & V0r', 'type': 'bool', 'value': True},
             {'name': 't0', 'type': 'int', 'value': 1, 'units':'s'},
             {'name': 'Downsample Pts.', 'type': 'int', 'value': 300},
             {'name': 'Fit Line to non contact', 'type': 'bool', 'value':False},
@@ -192,7 +192,7 @@ class TingFitParams(pTypes.GroupParameter):
             {'name': 'Init E0', 'type': 'int', 'value': 1000, 'units':'Pa'},
             {'name': 'Init tc', 'type': 'float', 'value': 0, 'units':'s'},
             {'name': 'Init f0', 'type': 'float', 'value': 0, 'units':'nN'},
-            {'name': 'Viscous Drag', 'type': 'float', 'value': 0, 'units':'pN/nm·s'},
+            {'name': 'Viscous Drag', 'type': 'float', 'value': 0.0003, 'units':'pN/nm·s'},
             {'name': 'Auto Init  Fluid. Exp.', 'type': 'bool', 'value':True},
             {'name': 'Init Fluid. Exp.', 'type': 'float', 'value': 0.20},
             {'name': 'Contact Offset', 'type': 'float', 'value': 1, 'units':'um'},
@@ -316,6 +316,7 @@ class TetherAnalysisParams(pTypes.GroupParameter):
 general_params = {'name': 'General Options', 'type': 'group', 'children': [
         {'name': 'Compute All Curves', 'type': 'bool', 'value': False},
         {'name': 'Compute All Files', 'type': 'bool', 'value': False},
+        {'name': 'Correct App', 'type': 'bool', 'value': True},  # if true, take until the maximum deflection for the aproach curve. 
     ]}
 
 # plot_params = {'name': 'Display Options', 'type': 'group', 'children': [
@@ -333,7 +334,7 @@ plot_params = {
         {'name': 'Show Con 1', 'type': 'bool', 'value': True},
         {'name': 'Show Ret 2', 'type': 'bool', 'value': True},
         # {'name': 'Z Sensor Delay', 'type': 'float', 'value': 1e-3, 'units': 's'},
-        # {'name': 'Correct Overshoot', 'type': 'bool', 'value': True},
+        {'name': 'Correct App', 'type': 'bool', 'value': False}, # if true, take until the maximum deflection for the aproach curve.
     ]
 }
 

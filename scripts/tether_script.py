@@ -35,6 +35,8 @@ from scipy.signal import savgol_filter
 pi = math.pi
 from scipy.stats import linregress
 
+debug = False
+
 def find_first_positive(arr):
     """
     Returns the index of the first positive value in a NumPy array.
@@ -284,19 +286,25 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         #shift to the left 
         dx = np.abs(x[-3] - x[-4])
 
-    print(f'Pl_threshold: {final_params["pl_threshold"]:.2e} N')
-    print(f'total distance: {dx * len(y):.2e} m, dx: {dx:.2e} m')
+    if debug:
+        print(f'Pl_threshold: {final_params["pl_threshold"]:.2e} N')
+        print(f'total distance: {dx * len(y):.2e} m, dx: {dx:.2e} m')
     
     # Calculate velocity from displacement vs time
     velocity_um_s = -(calculate_velocity(x, dt_arr))
-    print (f'velocity: {velocity_um_s:.4e} m/s, dt: {dt:.4e} sec')
+
+    if debug:
+        print (f'velocity: {velocity_um_s:.4e} m/s, dt: {dt:.4e} sec')
     
     # Find index of maximum deflection in the whole first half of the force curve
-    idx_max = np.argmax(y[:len(y) // 2])
-    print(f"Index of maximum deflection: {idx_max}, value: {y[idx_max]:.4e}")
+    # idx_max = np.argmax(y[:len(y) // 2])
+    idx_max = np.argmax(y[:len(y)])
+    if debug:
+        print(f"Index of maximum deflection: {idx_max}, value: {y[idx_max]:.4e}")
 
     dt_rel = dt_arr * velocity_um_s
-    print (f'derivative_dt = {dt_rel[-1]:0.4g} µm, relative_dt = {dt:0.4g}')
+    if debug:
+        print (f'derivative_dt = {dt_rel[-1]:0.4g} µm, relative_dt = {dt:0.4g}')
 
     # Calculate derivative of deflection with respect to time
     dy = np.gradient(y, dt_rel)
@@ -314,7 +322,9 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     pl_min_width_points = int(final_params['pl_min_width_um'] * 1e-6 / distance_per_point)
     # Print the actual physical distance covered by the minimum plateau width (in µm)
     actual_distance_um = pl_min_width_points * distance_per_point * 1e6 
-    print(f'pl_min_width_points: {pl_min_width_points} points, distance = {actual_distance_um:.2f} µm')
+
+    if debug:
+        print(f'pl_min_width_points: {pl_min_width_points} points, distance = {actual_distance_um:.2f} µm')
     # final_params['pl_min_width'] = pl_min_width_points
 
     # calculate index for params['plateau_end_remove_percent']
@@ -333,7 +343,9 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         y_analysis = y[:end_idx]
         x_analysis = x[:end_idx]
         dy_abs_sav_analysis = dy_abs_sav[:end_idx]
-        print(f'Removing {pl_end_remove_points} points ({final_params.get("plateau_end_remove_percent", 0)}%) from end for plateau detection. Analysis length: {len(y_analysis)}/{len(y)}')
+
+        if debug:
+            print(f'Removing {pl_end_remove_points} points ({final_params.get("plateau_end_remove_percent", 0)}%) from end for plateau detection. Analysis length: {len(y_analysis)}/{len(y)}')
 
     # Find flat plateaus using truncated data
     is_flat = dy_abs_sav_analysis < final_params['pl_threshold']
@@ -364,7 +376,8 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         # plot only the last N plateaus
         plateaus = plateaus[-final_params['last_num_plateaus']:]
     
-    print(f'Plateaus after filtering (last {final_params["last_num_plateaus"]}): {len(plateaus)}')
+    if debug:
+        print(f'Plateaus after filtering (last {final_params["last_num_plateaus"]}): {len(plateaus)}')
 
     # get the index of detachment which is between plateaus
     # Get the end index of the first plateau and the start index of the next plateau (if available)
@@ -388,17 +401,31 @@ def find_plateaus(x, y, params=None, dt=1e-3):
             else:
                 rupture_slopes.append(np.nan)
 
-    # Calculate plateau statistics
+    #%%% Calculate plateau statistics %%%#
     plateau_avg_idx_arr = []
     plateau_delta_avg_arr = []
+    plateau_start_n_1_arr = []
     
     for i, (start, end) in enumerate(plateaus):
+        # added params for calculating the last 25% of the N-1 plateau. 
+        # print (f'start_n_1: {start_n_1}, start: {start},  end: {end}, length: {plateau_index_length}, plateau_start_n_1: {plateau_start_n_1}')
+        final_params['N-1_plateau_percentage'] = 25
+        percentage_n_1 = final_params['N-1_plateau_percentage'] / 100.0
+
+        plateau_index_length = end - start
+        plateau_start_n_1 = int(np.floor((plateau_index_length * percentage_n_1)))
+
+        start_n_1 = end - plateau_start_n_1
+        plateau_avg_index = int((end - start) / 2)
+
         # Special handling for the last plateau average calculation
         if i == len(plateaus) - 1:
             # For the last plateau, use only a percentage of the plateau for averaging
             percentage = final_params['last_plateau_avg_percentage'] / 100.0
+            
             plateau_length = end - start
-            avg_length = max(1, int(plateau_length * percentage))  # Ensure at least 1 point
+            avg_length = max(plateau_avg_index, int(plateau_length * percentage))  # Ensure at least 1 point
+            # print (f'avg_length: {avg_length}')
             
             # Take the first X% of the last plateau
             avg_end = start + avg_length
@@ -415,10 +442,14 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         
         # Calculate delta differences from the perspective of going backwards
         if i < len(plateaus) - 1:
-            current_avg = np.mean(y_analysis[start:end])
+
+            current_avg = np.mean(y_analysis[start_n_1:end])
             next_avg = np.mean(y_analysis[plateaus[i+1][0]:plateaus[i+1][1]])
-            delta = next_avg - current_avg  # Difference to next plateau
+
+
+            delta = current_avg - next_avg  # Difference to next plateau
             plateau_delta_avg_arr.append(delta)
+            plateau_start_n_1_arr.append(start_n_1)
         else:
             # For the last plateau, there's no next plateau to compare
             plateau_delta_avg_arr.append(0.0)  # or np.nan if you prefer
@@ -432,14 +463,28 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     # calculate slope of plateau
     plateau_slopes = []
     for start, end in plateaus:
-        x_slice = x_analysis[start:end]
-        y_slice = y_analysis[start:end]
-        if end - start > 1 and len(np.unique(x_slice)) > 1:
+        plateau_index_length = end - start
+        plateau_start_n_1 = int(np.floor((plateau_index_length * percentage_n_1)))
+        start_n_1 = end - plateau_start_n_1
+
+
+
+        if plateau_index_length > 3 and len(np.unique(x_slice)) > 1:
+            x_slice = x_analysis[start_n_1:end]
+            y_slice = y_analysis[start_n_1:end]
             # check if there are only two points, that they are not the same, if so, 
-            slope, _, _, _, _ = linregress(x_slice, y_slice)
-            plateau_slopes.append(slope)
+            # added negative because the retract is flipped along the horizontal axis
         else:
+            x_slice = x_analysis[start:end]
+            y_slice = y_analysis[start:end]
+
+
+        slope, _, _, _, _ = linregress(x_slice, y_slice)
+
+        if slope == 0:
             plateau_slopes.append(np.nan)
+        else:
+            plateau_slopes.append(-slope)
 
     #
 
@@ -470,6 +515,7 @@ def find_plateaus(x, y, params=None, dt=1e-3):
         # Pad rupture_slopes to match the number of plateaus
         'rupture_slope': rupture_slopes + [np.nan] * (len(plateaus) - len(rupture_slopes)),
         'max_force': y[idx_max],
+        'start_n_1': plateau_start_n_1,
     })
 
     # Create dataframe of data for plotting
@@ -503,7 +549,16 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
     print(f"\nProcessing file: {os.path.basename(filename)}")
     
     # Load file
-    file = loadfile(filename)
+    try: 
+        file = loadfile(filename, hs3_bool=False)
+    except Exception as e:
+        print (f'Error: {e}')
+        print(" Could not load file, will try hs3 format...")
+        file = loadfile(filename, hs3_bool=True)
+        # return None
+
+    # if HS3 files,
+    
     filemetadata = file.filemetadata
     
     # Get file parameters
@@ -531,7 +586,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
             ret_piezo = -segment.zheight
             ret_deflection = -segment.vdeflection * K
             relative_SR_ret = relative_SR[segid]
-            vel_ret_um_s = segment.velocity * 1e-03  # Convert from nm to um/s
+            vel_ret_um_s = segment.velocity * 1e06  # Convert from nm to um/s
             time_ret = np.arange(len(ret_piezo)) * relative_SR_ret 
     
     # Tilt correction
@@ -685,7 +740,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
         'relative_SR_ret': relative_SR_ret,
         'index_first_positive': index_first_positive,
         'png_path': png_path,
-        'velocity_metadata': -vel_ret_um_s,
+        'velocity_metadata': vel_ret_um_s,
         'velocity_calc_um_s': velocity_calc_um_s,
         'df_data': df_data,
         'fourier_data': fourier_data,

@@ -45,6 +45,11 @@ class HertzFitWidget(QtWidgets.QWidget):
         self.paramTree = ParameterTree()
         self.paramTree.setParameters(self.params, showTop=False)
 
+        # added by Lorenzo
+        self.correct_app = self.params.child('General Options').child('Correct App')
+        self.correct_app.sigValueChanged.connect(self.update)
+        
+
         self.l2 = pg.GraphicsLayoutWidget()
 
         params_layout.addWidget(self.combobox, 1)
@@ -91,6 +96,9 @@ class HertzFitWidget(QtWidgets.QWidget):
             filedict = self.session.loaded_files
         else:
             filedict = {self.session.current_file.filemetadata['Entry_filename']:self.session.current_file}
+        if self.params.child('General Options').child('Correct App').value():
+            print('trueDat')
+            logger.info('correct app is true')
         params = get_params(self.params, "HertzFit")
         logger.info('Started ElasticityFit...')
         logger.info(f'Processing {len(filedict)} files')
@@ -234,8 +242,9 @@ class HertzFitWidget(QtWidgets.QWidget):
         print(self.current_file)
         print(type(self.current_file))
         print(self.current_file.filemetadata['file_path'])
-
-        force_curve = self.current_file.getcurve(current_curve_indx)
+        ## added 
+        # bool_correct_overshoot = self.params.child('Display Options').child('Correct Overshoot').value()    
+        force_curve = self.current_file.getcurve(current_curve_indx, bool_correct_overshoot = self.params.child('General Options').child('Correct App').value())
         force_curve.preprocess_force_curve(deflection_sens, height_channel)
 
         if self.session.current_file.filemetadata['file_type'] in cts.jpk_file_extensions:

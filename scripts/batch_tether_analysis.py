@@ -18,6 +18,27 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from tether_script import process_single_file
 
+def round_significant(x, sig=6):
+    """
+    Round scalar or array x to `sig` significant digits.
+    Preserves np.nan and handles zeros.
+    """
+    x_arr = np.asarray(x, dtype=float)
+    out = np.full_like(x_arr, np.nan, dtype=float)
+
+    # mask for finite non-zero values
+    mask = np.isfinite(x_arr) & (x_arr != 0)
+    if np.any(mask):
+        mags = np.floor(np.log10(np.abs(x_arr[mask])))
+        factor = 10.0 ** (sig - 1 - mags)
+        out[mask] = np.round(x_arr[mask] * factor) / factor
+
+    # zeros => 0.0
+    out[x_arr == 0] = 0.0
+
+    # return scalar if input was scalar
+    return out.item() if np.isscalar(x) else out
+
 def load_session_csv(session_file):
     """Load session CSV and return DataFrame"""
     try:
@@ -208,7 +229,7 @@ def run_batch_analysis(session_file, output_dir=None):
                         plateau_selected = False
                         if plateau_number < len(plateau_selections):
                             plateau_selected = bool(plateau_selections[plateau_number])
-                        
+                        # detailed plateau data
                         plateau_detail = {
                             'filename': Path(file_path).name,
                             'file_path': file_path,
@@ -227,7 +248,7 @@ def run_batch_analysis(session_file, output_dir=None):
                             'end_idx': int(plat_row.get('end')),
                             'slope': float(plat_row.get('plateau_slope')),
                             'tether_lifetime_m': float(plat_row.get('tether_lifetime_m')),
-                            'tether_lifetime_s': float(plat_row.get('tether_lifetime_s')),
+                            'tether_lifetime_s': round_significant(plat_row.get('tether_lifetime_s', np.nan), sig=6),
                             'rupture_start': int(plat_row.get('ruptures_start')),
                             'rupture_end': int(plat_row.get('ruptures_end')),
                             'rupture_slope': float(plat_row.get('rupture_slope', np.nan))  # Handle missing rupture slope
@@ -291,6 +312,7 @@ def main():
     session_file = '/Users/evillz/Data/article/2025_07_01_THP1_phd/sessions/velocity_normalized_thp1_cell1/tether_session_20250805_131220_all.csv'
     session_file = '/Users/evillz/Data/article/final_yey/tether_session_20250808_132848.csv'
     session_file = '/Users/evillz/Data/article/final_yey/final/yess/tether_session_20250809_170501.csv'
+    session_file = '/Users/evillz/Data/article/final_yey/w_felix/tether_session_20251029_113656.csv'
     # # Option 2: Interactive prompt
     # session_file = input("Enter path to session CSV file: ")
 
