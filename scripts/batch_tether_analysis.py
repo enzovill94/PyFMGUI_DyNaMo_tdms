@@ -313,6 +313,8 @@ def main():
     session_file = '/Users/evillz/Data/article/final_yey/tether_session_20250808_132848.csv'
     session_file = '/Users/evillz/Data/article/final_yey/final/yess/tether_session_20250809_170501.csv'
     session_file = '/Users/evillz/Data/article/final_yey/w_felix/tether_session_20251029_113656.csv'
+
+    # session_file = '/Users/evillz/Data/article/final_yey/mar_data_tethers/tether_session_20251118_225827.csv'
     # # Option 2: Interactive prompt
     # session_file = input("Enter path to session CSV file: ")
 
