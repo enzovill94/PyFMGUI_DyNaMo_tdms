@@ -43,6 +43,9 @@ from PyQt5.QtGui import QKeySequence, QFont
 import pyqtgraph as pg
 from pyfmreader import loadfile
 import datetime
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import plotly.io as pio
 
 # Import tether analysis functions
 from tether_script import process_single_file
@@ -453,6 +456,22 @@ Ready to analyze TDMS files efficiently!"""
         save_session_action.setStatusTip('Save current analysis session (Ctrl+S or S key)')
         save_session_action.triggered.connect(self.save_session)
         file_menu.addAction(save_session_action)
+        
+        file_menu.addSeparator()
+        
+        # Export Session as HTML action
+        export_html_action = QAction('Export Session as HTML...', self)
+        export_html_action.setShortcut('Ctrl+H')
+        export_html_action.setStatusTip('Export entire session with all curves as interactive HTML report')
+        export_html_action.triggered.connect(self.export_session_as_html)
+        file_menu.addAction(export_html_action)
+        
+        # Export All Plateaus to CSV action
+        export_csv_action = QAction('Export All Plateaus to CSV...', self)
+        export_csv_action.setShortcut('Ctrl+E')
+        export_csv_action.setStatusTip('Export all plateau data from all files to comprehensive CSV with analysis parameters')
+        export_csv_action.triggered.connect(self.export_all_plateaus_to_csv)
+        file_menu.addAction(export_csv_action)
         
         file_menu.addSeparator()
         
@@ -3005,6 +3024,363 @@ All file-specific parameters have been preserved."""
             self.index = original_index
             table_row = self.get_table_row_from_file_index(self.index)
             self.select_row_preserve_scroll(table_row)
+
+    def export_session_as_html(self):
+        """Export entire session with all curves as interactive HTML report"""
+        if not self.file_path:
+            self.status_label.setText("No files loaded to export")
+            return
+        
+        try:
+            # Open file dialog to save HTML file
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"tether_session_report_{timestamp}.html"
+            
+            html_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "Export Session as HTML Report", 
+                os.path.join(self.root_dir, default_filename),
+                "HTML files (*.html);;All files (*.*)"
+            )
+            
+            if not html_path:
+                return  # User cancelled
+            
+            # Create progress dialog
+            total_files = len(self.file_path)
+            progress_dialog = BatchAnalysisProgressDialog("Exporting Session to HTML", self)
+            progress_dialog.show()
+            progress_dialog.update_progress(0, total_files, "Generating HTML report...")
+            
+            # Create plotly figure with subplots
+            # Calculate grid layout (2 columns)
+            n_cols = 2
+            n_rows = (total_files + n_cols - 1) // n_cols
+            
+            # Create subplot titles
+            subplot_titles = []
+            for i, filename in enumerate(self.file):
+                status = 'Good' if self.bool_good_curve[i] == 1 else ('Bad' if self.bool_good_curve[i] == 0 else 'Not Analyzed')
+                subplot_titles.append(f"{i+1}. {filename[:30]}... ({status})")
+            
+            fig = make_subplots(
+                rows=n_rows, 
+                cols=n_cols,
+                subplot_titles=subplot_titles,
+                vertical_spacing=0.05,
+                horizontal_spacing=0.05,
+                specs=[[{"secondary_y": False} for _ in range(n_cols)] for _ in range(n_rows)]
+            )
+            
+            # Process each file
+            for file_idx, filepath in enumerate(self.file_path):
+                progress_dialog.update_progress(
+                    file_idx, 
+                    total_files, 
+                    f"Processing: {os.path.basename(filepath)}"
+                )
+                
+                # Calculate subplot position
+                row = (file_idx // n_cols) + 1
+                col = (file_idx % n_cols) + 1
+                
+                try:
+                    # Get file-specific parameters - CRITICAL: must get unique params per file!
+                    file_specific_params = self.get_file_parameters(filepath)
+                    
+                    # Debug: Print to verify different parameters per file
+                    print(f"File {file_idx}: {os.path.basename(filepath)}")
+                    print(f"  Threshold: {file_specific_params.get('pl_threshold', 0)*1e9:.2f} nN")
+                    print(f"  Custom Calib: {file_specific_params.get('use_custom_calibration', False)}")
+                    print(f"  Has saved params: {filepath in self.file_parameters}")
+                    
+                    # Run analysis with FILE-SPECIFIC parameters
+                    result = process_single_file(filepath, file_specific_params, save_plots=False)
+                    
+                    if result and result['plateaus']:
+                        # Get data
+                        rel_time = result['rel_time']
+                        defl_savitz = result['defl_savitz']
+                        plateaus = result['plateaus']
+                        df_plat = result['df_plat']
+                        
+                        # Plot processed data
+                        fig.add_trace(
+                            go.Scatter(
+                                x=rel_time,
+                                y=defl_savitz * 1e9,  # Convert to nN
+                                mode='lines',
+                                name='Force Curve',
+                                line=dict(color='blue', width=1),
+                                showlegend=False
+                            ),
+                            row=row, col=col
+                        )
+                        
+                        # Plot ALL detected plateaus (not just selected ones - this is for analysis review)
+                        colors = ['red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+                        for i, (start, end) in enumerate(plateaus):
+                            color = colors[i % len(colors)]
+                            
+                            # Plateau region
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=rel_time[start:end],
+                                    y=defl_savitz[start:end] * 1e9,
+                                    mode='lines',
+                                    name=f'P{i+1}',
+                                    line=dict(color=color, width=2),
+                                    showlegend=False
+                                ),
+                                row=row, col=col
+                            )
+                            
+                            # Average line
+                            plateau_avg = np.mean(defl_savitz[start:end]) * 1e9
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=[rel_time[start], rel_time[end-1]],
+                                    y=[plateau_avg, plateau_avg],
+                                    mode='lines',
+                                    name=f'Avg{i+1}',
+                                    line=dict(color=color, width=2, dash='dash'),
+                                    showlegend=False
+                                ),
+                                row=row, col=col
+                            )
+                        
+                        # Update axes for this subplot
+                        fig.update_xaxes(title_text="Time (s)", row=row, col=col)
+                        fig.update_yaxes(title_text="Force (nN)", row=row, col=col)
+                        
+                        # Add parameter annotation showing file-specific settings
+                        param_text = (
+                            f"Threshold: {file_specific_params.get('pl_threshold', 0)*1e9:.1f} nN<br>"
+                            f"Min length: {file_specific_params.get('pl_min_length', 0):.0f}<br>"
+                            f"Max force: {file_specific_params.get('pl_max_force', 0)*1e9:.1f} nN"
+                        )
+                        
+                        # Add text annotation in top-right corner of subplot
+                        fig.add_annotation(
+                            text=param_text,
+                            xref=f"x{file_idx+1} domain", 
+                            yref=f"y{file_idx+1} domain",
+                            x=0.98, y=0.98,
+                            xanchor='right',
+                            yanchor='top',
+                            showarrow=False,
+                            font=dict(size=8, color="black"),
+                            bgcolor="rgba(255, 255, 255, 0.8)",
+                            bordercolor="gray",
+                            borderwidth=1,
+                            borderpad=2,
+                            row=row, col=col
+                        )
+                        
+                    else:
+                        # No plateaus found - plot empty with annotation
+                        fig.add_annotation(
+                            text="No plateaus detected",
+                            xref=f"x{file_idx+1}", yref=f"y{file_idx+1}",
+                            x=0.5, y=0.5,
+                            showarrow=False,
+                            font=dict(size=12, color="red"),
+                            row=row, col=col
+                        )
+                        
+                except Exception as e:
+                    # Error processing file - add error annotation
+                    fig.add_annotation(
+                        text=f"Error: {str(e)[:50]}",
+                        xref=f"x{file_idx+1}", yref=f"y{file_idx+1}",
+                        x=0.5, y=0.5,
+                        showarrow=False,
+                        font=dict(size=10, color="red"),
+                        row=row, col=col
+                    )
+            
+            # Update overall layout
+            good_count = int(np.sum(self.bool_good_curve == 1))
+            bad_count = int(np.sum(self.bool_good_curve == 0))
+            
+            fig.update_layout(
+                title_text=f"Tether Analysis Session Report - {total_files} files ({good_count} good, {bad_count} bad)<br><sub>Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</sub>",
+                showlegend=False,
+                height=400 * n_rows,  # Adjust height based on number of rows
+                width=1600,
+                font=dict(size=10)
+            )
+            
+            # Save HTML file
+            progress_dialog.update_progress(total_files, total_files, "Saving HTML file...")
+            
+            pio.write_html(
+                fig, 
+                html_path,
+                config={'responsive': True, 'displayModeBar': True, 'displaylogo': False}
+            )
+            
+            # Show completion
+            progress_dialog.set_final_message(f"HTML report saved!\\n{os.path.basename(html_path)}")
+            QTimer.singleShot(2000, progress_dialog.close)
+            
+            self.status_label.setText(f"HTML report exported: {os.path.basename(html_path)}")
+            self.results_text.setText(f"""HTML Report Exported Successfully!
+
+File: {os.path.basename(html_path)}
+Location: {os.path.dirname(html_path)}
+
+Report Contents:
+• Total files: {total_files}
+• Good files: {good_count}
+• Bad files: {bad_count}
+• Interactive plots: All curves with plateau overlays
+
+The HTML file can be opened in any web browser and includes:
+- Interactive zoom/pan controls
+- Individual curve analysis results
+- Color-coded plateau detection
+- Session metadata
+
+Open the file to view your complete analysis session!""")
+            
+        except Exception as e:
+            self.status_label.setText(f"Error exporting HTML: {str(e)}")
+            self.results_text.setText(f"Error exporting HTML report: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def export_all_plateaus_to_csv(self):
+        """Export all plateau data from all files to a comprehensive CSV"""
+        if not self.file_path:
+            self.status_label.setText("No files loaded to export")
+            return
+        
+        try:
+            # Open file dialog to save CSV file
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"all_plateaus_data_{timestamp}.csv"
+            
+            csv_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "Export All Plateau Data to CSV", 
+                os.path.join(self.root_dir, default_filename),
+                "CSV files (*.csv);;All files (*.*)"
+            )
+            
+            if not csv_path:
+                return  # User cancelled
+            
+            # Create progress dialog
+            total_files = len(self.file_path)
+            progress_dialog = BatchAnalysisProgressDialog("Exporting Plateau Data", self)
+            progress_dialog.show()
+            progress_dialog.update_progress(0, total_files, "Collecting plateau data...")
+            
+            # Collect all plateau data
+            all_plateau_data = []
+            
+            for file_idx, filepath in enumerate(self.file_path):
+                progress_dialog.update_progress(
+                    file_idx, 
+                    total_files, 
+                    f"Processing: {os.path.basename(filepath)}"
+                )
+                
+                try:
+                    # Get file-specific parameters
+                    file_specific_params = self.get_file_parameters(filepath)
+                    
+                    # Run analysis to get plateau data
+                    result = process_single_file(filepath, file_specific_params, save_plots=False)
+                    
+                    if result and 'df_plat' in result and len(result['df_plat']) > 0:
+                        df_plat = result['df_plat']
+                        
+                        # Get file-specific plateau selections
+                        selected_plateaus = self.plateau_selections.get(filepath, list(range(len(result['plateaus']))))
+                        
+                        # Add file info and parameters to each plateau row
+                        for plat_idx, (_, plat_row) in enumerate(df_plat.iterrows()):
+                            plateau_data = {
+                                'file_index': file_idx,
+                                'filename': os.path.basename(filepath),
+                                'filepath': filepath,
+                                'file_status': 'Good' if self.bool_good_curve[file_idx] == 1 else ('Bad' if self.bool_good_curve[file_idx] == 0 else 'Not Analyzed'),
+                                'plateau_selected': plat_idx in selected_plateaus,
+                                'plateau_number': int(plat_row['plateaus']),
+                                'plateau_avg_force_N': float(plat_row['plateau_avg']),
+                                'plateau_avg_force_nN': float(plat_row['plateau_avg']) * 1e9,
+                                'delta_avg_N': float(plat_row['delta_avg']),
+                                'delta_avg_nN': float(plat_row['delta_avg']) * 1e9,
+                                'delta_time_s': float(plat_row['delta_time']),
+                                'mean_derivative': float(plat_row['mean dN/dt']),
+                                'velocity_calc_um_s': float(plat_row['velocity_calc_um_s']),
+                                'plateau_slope': float(plat_row['plateau_slope']) if not pd.isna(plat_row['plateau_slope']) else None,
+                                'tether_lifetime_m': float(plat_row['tether_lifetime_m']),
+                                'tether_lifetime_um': float(plat_row['tether_lifetime_m']) * 1e6,
+                                'tether_lifetime_s': float(plat_row['tether_lifetime_s']),
+                                'max_force_N': float(plat_row['max_force']),
+                                'max_force_nN': float(plat_row['max_force']) * 1e9,
+                                'rupture_slope': float(plat_row['rupture_slope']) if not pd.isna(plat_row['rupture_slope']) else None,
+                                # Analysis parameters used
+                                'param_threshold_N': file_specific_params.get('pl_threshold', 0),
+                                'param_threshold_nN': file_specific_params.get('pl_threshold', 0) * 1e9,
+                                'param_custom_calib': file_specific_params.get('use_custom_calibration', False),
+                                'param_spring_const_Nbym': file_specific_params.get('spring_const_Nbym', 0.05),
+                                'param_defl_sens_nmbyV': file_specific_params.get('defl_sens_nmbyV', 50.0),
+                                'param_tilt_correction': file_specific_params.get('enable_tilt_correction', True),
+                                'param_denoising': file_specific_params.get('enable_denoising', False),
+                                'param_sav_window': file_specific_params.get('sav_window_length', 10),
+                                'param_sav_polyorder': file_specific_params.get('sav_polyorder', 1),
+                                'param_last_num_plateaus': file_specific_params.get('last_num_plateaus', 7),
+                            }
+                            
+                            all_plateau_data.append(plateau_data)
+                    
+                except Exception as e:
+                    print(f"Error processing {filepath}: {e}")
+                    continue
+            
+            # Create DataFrame and save
+            if all_plateau_data:
+                df_all_plateaus = pd.DataFrame(all_plateau_data)
+                df_all_plateaus.to_csv(csv_path, index=False)
+                
+                # Show completion
+                progress_dialog.set_final_message(f"CSV exported!\n{len(all_plateau_data)} plateaus from {total_files} files")
+                QTimer.singleShot(2000, progress_dialog.close)
+                
+                self.status_label.setText(f"Exported {len(all_plateau_data)} plateaus to CSV")
+                self.results_text.setText(f"""All Plateau Data Exported Successfully!
+
+File: {os.path.basename(csv_path)}
+Location: {os.path.dirname(csv_path)}
+
+Data Exported:
+• Total plateaus: {len(all_plateau_data)}
+• Files processed: {total_files}
+• Columns: {len(df_all_plateaus.columns)}
+
+Includes:
+- Plateau forces (N and nN)
+- Delta forces between plateaus
+- Tether lifetimes (m, µm, s)
+- Velocities and slopes
+- All analysis parameters used per file
+- File-specific selections
+
+Perfect for data analysis in Excel, Python, R, or other tools!""")
+            else:
+                progress_dialog.close()
+                self.status_label.setText("No plateau data found to export")
+                self.results_text.setText("No plateaus were detected in any files. Run analysis first.")
+                
+        except Exception as e:
+            self.status_label.setText(f"Error exporting CSV: {str(e)}")
+            self.results_text.setText(f"Error exporting plateau data: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def load_compound_sessions(self):
         """Load and add multiple session files to the current session"""
