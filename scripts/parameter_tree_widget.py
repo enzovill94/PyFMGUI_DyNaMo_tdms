@@ -70,6 +70,7 @@ class ParameterTreeWidget(QWidget):
                 'name': 'Baseline Correction',
                 'type': 'group',
                 'children': [
+                    {'name': 'Enable Tilt Correction', 'type': 'bool', 'value': True, 'key': 'enable_tilt_correction'},
                     {'name': 'Max Tilt Offset (%)', 'type': 'int', 'value': 100, 'limits': (30, 100), 'step': 5, 'key': 'max_offset'},
                     {'name': 'Min Tilt Offset (%)', 'type': 'int', 'value': 70, 'limits': (20, 90), 'step': 5, 'key': 'min_offset'},
                 ]
@@ -390,26 +391,26 @@ class ParameterTreeWidget(QWidget):
         
         return selected_paths
 
-    def update_parameter_status(self, filename=None, is_file_specific=False):
+    def update_parameter_status(self, filename=None, is_file_specific=False, maintain_override=False):
         """Update the parameter status label"""
-        if self.should_maintain_parameters():
+        if maintain_override or self.should_maintain_parameters():
             selected_paths = self.get_selected_parameter_paths()
             
             # Show that parameters are being maintained
             if filename:
                 if selected_paths:
-                    self.param_status_label.setText(f"Maintaining {len(selected_paths)} selected parameters for: {os.path.basename(filename)}")
+                    self.param_status_label.setText(f"🔒 Maintaining {len(selected_paths)} selected parameters for: {os.path.basename(filename)}")
                 else:
-                    self.param_status_label.setText(f"Maintaining all parameters for: {os.path.basename(filename)}")
+                    self.param_status_label.setText(f"🔒 Maintaining all parameters for: {os.path.basename(filename)}")
             else:
                 if selected_paths:
-                    self.param_status_label.setText(f"Maintaining {len(selected_paths)} selected parameters")
+                    self.param_status_label.setText(f"🔒 Maintaining {len(selected_paths)} selected parameters")
                 else:
-                    self.param_status_label.setText("Maintaining all current parameters")
+                    self.param_status_label.setText("🔒 Maintaining all current parameters")
             self.param_status_label.setStyleSheet("QLabel { color: #FF9800; background-color: #FFF3E0; padding: 3px; border-radius: 3px; font-weight: bold; }")
         elif is_file_specific and filename:
-            self.param_status_label.setText(f"File-specific: {os.path.basename(filename)}")
+            self.param_status_label.setText(f"📄 File-specific: {os.path.basename(filename)}")
             self.param_status_label.setStyleSheet("QLabel { color: #2196F3; background-color: #E3F2FD; padding: 3px; border-radius: 3px; font-weight: bold; }")
         else:
-            self.param_status_label.setText("Global parameters")
+            self.param_status_label.setText("⚙️ Global parameters")
             self.param_status_label.setStyleSheet("QLabel { color: #666; background-color: #f0f0f0; padding: 3px; border-radius: 3px; }")

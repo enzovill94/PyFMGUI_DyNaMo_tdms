@@ -35,7 +35,7 @@ from scipy.signal import savgol_filter
 pi = math.pi
 from scipy.stats import linregress
 
-debug = False
+debug = True
 
 def find_first_positive(arr):
     """
@@ -284,7 +284,7 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     dx =np.abs(x[0] - x[1])
     if dx == 0: 
         #shift to the left 
-        dx = np.abs(x[-3] - x[-4])
+        dx = np.abs(x[-2] - x[-1])
 
     if debug:
         print(f'Pl_threshold: {final_params["pl_threshold"]:.2e} N')
@@ -333,8 +333,8 @@ def find_plateaus(x, y, params=None, dt=1e-3):
     # Truncate data arrays ONLY for plateau detection
     if pl_end_remove_points == 0:
         # Don't remove anything - use entire arrays for plateau detection
-        y_analysis = y
-        x_analysis = x
+        y_analysis = y.copy()
+        x_analysis = x.copy()
         dy_abs_sav_analysis = dy_abs_sav
         print(f'Using full arrays for plateau detection. Length: {len(y_analysis)}')
     else:
@@ -515,8 +515,8 @@ def find_plateaus(x, y, params=None, dt=1e-3):
             'tether_lifetime_s': [(int(((end- idx_max) * 0.9))) * dt  for start, end in plateaus],
             'average_velocity': velocity_um_s,
             'idx_max': idx_max,
-            'ruptures_start': [int(ruptures[i][0] *0.8) if i < len(ruptures) else None for i in range(len(plateaus))],
-            'ruptures_end': [int(ruptures[i][1] *1.2) if i < len(ruptures) else None for i in range(len(plateaus))],
+            'ruptures_start': [int(ruptures[i][0] *0.8) if i < len(ruptures) and ruptures[i][0] is not None else None for i in range(len(plateaus))],
+            'ruptures_end': [int(ruptures[i][1] *1.2) if i < len(ruptures) and ruptures[i][1] is not None else None for i in range(len(plateaus))],
             # Pad rupture_slopes to match the number of plateaus
             'rupture_slope': rupture_slopes + [np.nan] * (len(plateaus) - len(rupture_slopes)),
             'max_force': y[idx_max],
@@ -603,6 +603,8 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
         file_deflection_sensitivity = filemetadata['defl_sens_nmbyV']  # nm/V
         K = filemetadata['spring_const_Nbym']  # N/m
         defl_sens = file_deflection_sensitivity / 1e9  # m/V
+
+    print (f"Spring constant: {K:.4f} N/m, Deflection sensitivity: {file_deflection_sensitivity:.2f} nm/V")
     
     # Get force curve with parameters from GUI
     # z_sensor_delay = params.get('z_sensor_delay', 0.001)
@@ -626,11 +628,16 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
             vel_ret_um_s = segment.velocity * 1e06  # Convert from nm to um/s
             time_ret = np.arange(len(ret_piezo)) * relative_SR_ret 
     
-    # Tilt correction
-    max_offset = params.get('max_offset', 100)  # %
-    min_offset = params.get('min_offset', 70)   # %
-    max_offset, min_offset = update_tilt_range(ret_piezo, max_offset, min_offset, offset_type='percentage')
-    tilt_ret_deflection_N = correct_tilt(ret_piezo, ret_deflection, max_offset, min_offset)
+    # Tilt correction (conditional based on parameter)
+    enable_tilt_correction = params.get('enable_tilt_correction', True)
+    if enable_tilt_correction:
+        max_offset = params.get('max_offset', 100)  # %
+        min_offset = params.get('min_offset', 70)   # %
+        max_offset, min_offset = update_tilt_range(ret_piezo, max_offset, min_offset, offset_type='percentage')
+        tilt_ret_deflection_N = correct_tilt(ret_piezo, ret_deflection, max_offset, min_offset)
+    else:
+        # Skip tilt correction - use original deflection
+        tilt_ret_deflection_N = ret_deflection
 
     # ADD Denoise processing here
     filtered_signal = tilt_ret_deflection_N.copy()

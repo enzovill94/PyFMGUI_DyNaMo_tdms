@@ -1155,6 +1155,7 @@ Ready to analyze TDMS files efficiently!"""
             'last_num_plateaus': 7,
             'last_plateau_avg_percentage': 15,
             'plateau_end_remove_percent': 0,  # New parameter for removing end percentage from plateau analysis
+            'enable_tilt_correction': True,
             'max_offset': 100,
             'min_offset': 70,
             # Denoising parameters
@@ -1186,20 +1187,31 @@ Ready to analyze TDMS files efficiently!"""
             
         try:
             current_file = self.file_path[self.index]
-            file_params = self.get_file_parameters(current_file)
             
-            # Temporarily block parameter change signals to prevent double analysis
-            self.param_widget.blockSignals(True)
+            # Check if "Maintain Current Parameters" is enabled
+            maintain_current = self.param_widget.should_maintain_parameters()
             
-            # Update parameter widget with file-specific parameters
-            self.param_widget.setParameters(file_params)
-            
-            # Re-enable signals
-            self.param_widget.blockSignals(False)
-            
-            # Update status label
-            is_file_specific = True  # Indicate that these are file-specific parameters
-            self.param_widget.update_parameter_status(current_file, is_file_specific)
+            if maintain_current:
+                # Don't load saved parameters - keep current widget values
+                # But update the status to show it's using current parameters
+                is_file_specific = current_file in self.file_parameters
+                self.param_widget.update_parameter_status(current_file, is_file_specific, maintain_override=True)
+            else:
+                # Load file-specific parameters (or defaults if none saved)
+                file_params = self.get_file_parameters(current_file)
+                
+                # Temporarily block parameter change signals to prevent double analysis
+                self.param_widget.blockSignals(True)
+                
+                # Update parameter widget with file-specific parameters
+                self.param_widget.setParameters(file_params)
+                
+                # Re-enable signals
+                self.param_widget.blockSignals(False)
+                
+                # Update status label
+                is_file_specific = current_file in self.file_parameters
+                self.param_widget.update_parameter_status(current_file, is_file_specific)
         except Exception as e:
             print(f"Warning: Could not load parameters for current file: {e}")
     
@@ -1343,13 +1355,26 @@ Ready to analyze TDMS files efficiently!"""
             metadata = uff.filemetadata
             FC = uff.getcurve(0)
             
-            defl_sens = metadata['defl_sens_nmbyV'] / 1e09
+            # Get current parameters to check for custom calibration
+            params = self.param_widget.getCurrentParameters()
+            use_custom_calibration = params.get('use_custom_calibration', False)
+            
+            if use_custom_calibration:
+                # Use custom calibration values from parameters
+                K = params.get('spring_const_Nbym', 0.05)  # N/m
+                defl_sens_nmbyV = params.get('defl_sens_nmbyV', 50.0)  # nm/V
+                defl_sens = defl_sens_nmbyV / 1e9  # Convert to m/V
+            else:
+                # Use calibration values from file metadata
+                K = metadata['spring_const_Nbym']  # N/m
+                defl_sens = metadata['defl_sens_nmbyV'] / 1e09  # Convert to m/V
+            
             FC.preprocess_force_curve(defl_sens, metadata['height_channel_key'])
             
             # Get retract segment
             for segid, segment in FC.get_segments():
                 if segment.segment_type in ('Retract', 'Ret'):
-                    ret_deflection = -segment.vdeflection * metadata['spring_const_Nbym']
+                    ret_deflection = -segment.vdeflection * K  # Use K from calibration settings
                     
                     # Create time array
                     relative_SR = metadata['relative_sr'][segid]
@@ -1392,12 +1417,25 @@ Ready to analyze TDMS files efficiently!"""
                 metadata = uff.filemetadata
                 FC = uff.getcurve(0)
                 
-                defl_sens = metadata['defl_sens_nmbyV'] / 1e09
+                # Get current parameters to check for custom calibration
+                params = self.param_widget.getCurrentParameters()
+                use_custom_calibration = params.get('use_custom_calibration', False)
+                
+                if use_custom_calibration:
+                    # Use custom calibration values from parameters
+                    K = params.get('spring_const_Nbym', 0.05)  # N/m
+                    defl_sens_nmbyV = params.get('defl_sens_nmbyV', 50.0)  # nm/V
+                    defl_sens = defl_sens_nmbyV / 1e9  # Convert to m/V
+                else:
+                    # Use calibration values from file metadata
+                    K = metadata['spring_const_Nbym']  # N/m
+                    defl_sens = metadata['defl_sens_nmbyV'] / 1e09  # Convert to m/V
+                
                 FC.preprocess_force_curve(defl_sens, metadata['height_channel_key'])
                 
                 for segid, segment in FC.get_segments():
                     if segment.segment_type in ('Retract', 'Ret'):
-                        ret_deflection = -segment.vdeflection * metadata['spring_const_Nbym']
+                        ret_deflection = -segment.vdeflection * K  # Use K from calibration settings
                         relative_SR = metadata['relative_sr'][segid]
                         time_array = np.arange(len(ret_deflection)) * relative_SR
                         
