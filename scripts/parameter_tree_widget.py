@@ -89,6 +89,15 @@ class ParameterTreeWidget(QWidget):
                     {'name': 'Use Interpolation', 'type': 'bool', 'value': True, 'key': 'denoise_interp'},
                 ]
             },
+            {
+                'name': 'Calibration',
+                'type': 'group',
+                'children': [
+                    {'name': 'Use Custom Calibration', 'type': 'bool', 'value': False, 'key': 'use_custom_calibration'},
+                    {'name': 'Spring Constant K (N/m)', 'type': 'float', 'value': 0.01, 'limits': (0.00001, 10.0), 'step': 0.001, 'decimals': 5, 'key': 'spring_const_Nbym'},
+                    {'name': 'Deflection Sens (nm/V)', 'type': 'float', 'value': 100.0, 'limits': (1.0, 50000.0), 'step': 1.0, 'decimals': 5, 'key': 'defl_sens_nmbyV'},
+                ]
+            },
 
         ]
         

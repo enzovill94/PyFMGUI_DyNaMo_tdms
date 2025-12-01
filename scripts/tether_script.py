@@ -586,15 +586,23 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
         file = loadfile(filename, hs3_bool=True)
         # return None
 
-    # if HS3 files,
-    
+    # Get file metadata
     filemetadata = file.filemetadata
-    
-    # Get file parameters
-    file_deflection_sensitivity = filemetadata['defl_sens_nmbyV']  # nm/V
-    K = filemetadata['spring_const_Nbym']  # N/m
     height_channel_key = filemetadata['height_channel_key']
-    defl_sens = file_deflection_sensitivity / 1e9  # m/V
+    
+    # Check if custom calibration is enabled
+    use_custom_calibration = params.get('use_custom_calibration', False)
+    
+    if use_custom_calibration:
+        # Use custom calibration values from parameters
+        K = params.get('spring_const_Nbym', 0.05)  # N/m
+        file_deflection_sensitivity = params.get('defl_sens_nmbyV', 50.0)  # nm/V
+        defl_sens = file_deflection_sensitivity / 1e9  # m/V
+    else:
+        # Use calibration values from file metadata
+        file_deflection_sensitivity = filemetadata['defl_sens_nmbyV']  # nm/V
+        K = filemetadata['spring_const_Nbym']  # N/m
+        defl_sens = file_deflection_sensitivity / 1e9  # m/V
     
     # Get force curve with parameters from GUI
     # z_sensor_delay = params.get('z_sensor_delay', 0.001)

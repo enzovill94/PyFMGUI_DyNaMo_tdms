@@ -1165,7 +1165,11 @@ Ready to analyze TDMS files efficiently!"""
             'denoise_ranges': '[(1, 6)]',
             'denoise_remove_percent': 10,
             'denoise_remove_end_percent': 10,
-            'denoise_interp': True
+            'denoise_interp': True,
+            # Calibration parameters
+            'use_custom_calibration': False,
+            'spring_const_Nbym': 0.05,
+            'defl_sens_nmbyV': 50.0
         }
     
     def set_file_parameters(self, file_path, params):

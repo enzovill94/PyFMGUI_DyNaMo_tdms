@@ -80,11 +80,14 @@ class ParameterWidget(QWidget):
             ('max_offset', 100, 50, 100, 5, "Max Tilt Offset (%)"),
             ('min_offset', 70, 30, 90, 5, "Min Tilt Offset (%)"),
             ('z_sensor_delay', 0.001, 0.0001, 0.01, 0.0001, "Z Sensor Delay (s)"),
+            ('spring_const_Nbym', 0.05, 0.001, 10.0, 0.001, "Spring Constant K (N/m)"),
+            ('defl_sens_nmbyV', 50.0, 1.0, 500.0, 1.0, "Deflection Sens (nm/V)"),
         ]
         
         # Add checkbox parameters
         checkbox_params = [
-            ('bool_correct_overshoot', True, "Correct Overshoot")
+            ('bool_correct_overshoot', True, "Correct Overshoot"),
+            ('use_custom_calibration', False, "Use Custom K & invOLS")
         ]
         
         for param_name, default, min_val, max_val, step, label in params_config:
@@ -99,6 +102,24 @@ class ParameterWidget(QWidget):
                 spinbox.setValue(default * 1e9)
                 spinbox.setSuffix(" nN")
                 spinbox.valueChanged.connect(lambda v, name=param_name: self.updateParameter(name, v * 1e-9))
+            elif param_name == 'spring_const_Nbym':
+                # Special handling for spring constant with more precision
+                spinbox = QDoubleSpinBox()
+                spinbox.setDecimals(3)
+                spinbox.setRange(min_val, max_val)
+                spinbox.setValue(default)
+                spinbox.setSingleStep(step)
+                spinbox.setSuffix(" N/m")
+                spinbox.valueChanged.connect(lambda v, name=param_name: self.updateParameter(name, v))
+            elif param_name == 'defl_sens_nmbyV':
+                # Special handling for deflection sensitivity
+                spinbox = QDoubleSpinBox()
+                spinbox.setDecimals(1)
+                spinbox.setRange(min_val, max_val)
+                spinbox.setValue(default)
+                spinbox.setSingleStep(step)
+                spinbox.setSuffix(" nm/V")
+                spinbox.valueChanged.connect(lambda v, name=param_name: self.updateParameter(name, v))
             elif param_name == 'z_sensor_delay':
                 # Special handling for z_sensor_delay with more precision
                 spinbox = QDoubleSpinBox()
@@ -189,7 +210,10 @@ class ParameterWidget(QWidget):
             'max_offset': 100,
             'min_offset': 70,
             'z_sensor_delay': 0.001,
-            'bool_correct_overshoot': True
+            'spring_const_Nbym': 0.05,
+            'defl_sens_nmbyV': 50.0,
+            'bool_correct_overshoot': True,
+            'use_custom_calibration': False
         }
         
         for name, value in defaults.items():
@@ -619,7 +643,10 @@ Click a folder to start analyzing TDMS files."""
             'max_offset': 100,
             'min_offset': 70,
             'z_sensor_delay': 0.001,
-            'bool_correct_overshoot': True
+            'spring_const_Nbym': 0.05,
+            'defl_sens_nmbyV': 50.0,
+            'bool_correct_overshoot': True,
+            'use_custom_calibration': False
         }
     
     def set_file_parameters(self, file_path, params):
