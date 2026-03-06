@@ -297,7 +297,9 @@ def run_batch_analysis(session_file, output_dir=None):
         print(f"Overall mean derivative: {summary['overall_mean dN/dt']:.4e}")
         print(f"Overall std derivative: {summary['overall_std_derivative']:.4e}")
         print(f"Overall mean metadata velocity: {summary['overall_mean_velocity_metadata']:.2f} μm/s")
+        print(f'Overall max metadata velocity: {results_df["velocity_metadata"].max():.2f} μm/s')
         print(f"Overall mean calculated velocity: {summary['overall_mean_velocity_calc']:.2f} μm/s")
+        print(f'Overall max calculated velocity: {results_df["velocity_calc_um_s"].max():.2f} μm/s')
         print(f"Overall mean plateau velocity: {summary['overall_mean_plateau_velocity']:.2f} μm/s")
         print(f"Overall plateau slope: {summary['overall_plateau_slope']:.4f}" if summary['overall_plateau_slope'] is not None else "Plateau slope data not available")
         
@@ -313,6 +315,7 @@ def main():
     session_file = '/Users/evillz/Data/article/final_yey/tether_session_20250808_132848.csv'
     session_file = '/Users/evillz/Data/article/final_yey/final/yess/tether_session_20250809_170501.csv'
     session_file = '/Users/evillz/Data/article/final_yey/w_felix/tether_session_20251029_113656.csv'
+    # session_file = '/Users/evillz/Data/article/final_yey/mar_data_tethers/tether_session_20251201_154308_mar_all.csv'
 
     # session_file = '/Users/evillz/Data/article/final_yey/mar_data_tethers/tether_session_20251118_225827.csv'
     # # Option 2: Interactive prompt

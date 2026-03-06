@@ -586,6 +586,9 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
         file = loadfile(filename, hs3_bool=True)
         # return None
 
+    # Check file type
+    
+
     # Get file metadata
     filemetadata = file.filemetadata
     height_channel_key = filemetadata['height_channel_key']
