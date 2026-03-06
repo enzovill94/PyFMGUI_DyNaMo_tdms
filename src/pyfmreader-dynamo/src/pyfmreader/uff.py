@@ -42,6 +42,8 @@ class UFF:
         # have additional image data.
         self.imagedata=None
         self._curve_cache = None  # Cache for loaded curves to avoid reloading
+        # Psnex specific
+        self.bool_correct_overshoot = False
     
     def _loadcurve(self, curveidx, afmfile, file_type):
         """
@@ -79,7 +81,7 @@ class UFF:
         elif file_type in ufffiles:
             FC = loadUFFcurve(self.filemetadata)
         elif file_type in psnexfiles:
-            FC = loadPSNEXcurve(self.filemetadata, curveidx) 
+            FC = loadPSNEXcurve(self.filemetadata, curveidx, bool_correct_overshoot=self.bool_correct_overshoot) 
         elif file_type in hs3files:
             FC = loadhs3curve(self.filemetadata, curveidx)
                
@@ -89,7 +91,7 @@ class UFF:
             
         return FC
 
-    def getcurve(self, curveidx):
+    def getcurve(self, curveidx, bool_correct_overshoot=False):
         """
         Function used to load a single curve from a file.
         
@@ -108,6 +110,11 @@ class UFF:
                 Returns:
                         FC (utils.forcecurve.ForceCurve): ForceCurve object containing the force curve data.
         """
+        # check if bool_correct_overshoot changed state
+        if self.bool_correct_overshoot != bool_correct_overshoot:
+            self._curve_cache = None  # Clear cache if the correction state changes
+        
+        self.bool_correct_overshoot = bool_correct_overshoot
         file_type = self.filemetadata['file_type']
         if file_type in jpkfiles:
             with open(self.filemetadata['file_path'], 'rb') as file:

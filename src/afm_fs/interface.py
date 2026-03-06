@@ -66,6 +66,7 @@ class App:
         self.export_file_path = None # Export function, if filled then exports automatically to the first give file
         self.psnex_file = None
         self.filetype = None
+        self.hs3_file = None
 
 
         # Get screen size
@@ -261,12 +262,18 @@ class App:
 
 
             self.path, self.all_tdms= tdms.grab_tdms(self.directory)
-
+            
             try: 
                 self.psnex_file = loadfile(self.path)
-                print ('psnex file loaded')
-            except: 
-                return
+                print('psnex file loaded')
+            except Exception:
+                try: 
+                    self.psnex_file = None
+                    self.hs3_file = loadfile(self.path, hs3_bool=True)
+                    print('hs3 file loaded')
+                except Exception:
+                    self.hs3_file = None
+                    return
 
 
             if self.path ==None:

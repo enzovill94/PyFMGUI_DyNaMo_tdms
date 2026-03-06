@@ -7,7 +7,8 @@ import numpy as np
 import shutil
 # from pyfmreader.ps_nex.parseTDMS import grab_tdms
 # from pyfmreader import loadfile
-from pyfmreader.ps_nex.loadpsnexMaps import load_map_file_square_tdms, load_map_file_square_tdms_v2
+import pyfmreader.ps_nex.loadpsnexMaps as maps
+
 import os
 import glob
 
@@ -50,28 +51,7 @@ def loadPSNEXimg(UFF):
             Returns:
                     piezoimg (np.array): 2D array containing the piezo image.
     """
-    # for testing purposes
-    CSVfile = False
-
-    filepath = UFF.filemetadata['file_path']
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"File {filepath} does not exist.")
-    
-    if UFF.filemetadata['mapping_bool']:
-        print("This is a psnex mapping file! ")
-
-    # Check if csv file exists in the directory
-    csv_files = [f for f in glob.glob(os.path.join(os.path.dirname(filepath), '*.csv'))]
-    if csv_files:
-        print(f"CSV file(s) found: {csv_files}")
-        CSVfile = True
-        # Load the first CSV file found into a DataFrame
-        data = pd.read_csv(csv_files[0])
-        piezoimg = np.array(data['Z_height_um_zero']).reshape((UFF.filemetadata['num_y_pixels'], UFF.filemetadata['num_x_pixels']))
-    else:
-        print("No CSV Map file found in the directory.")
-        piezoimg,data = createPSNEXimgcsv(UFF)
-    print('done')
+    piezoimg, data = None, None
     return piezoimg, data
 
 
@@ -111,7 +91,7 @@ def createPSNEXimgcsv(UFF):
         # if no files were found, check if the directory is a valid path
         files.append(filepath)
     
-    data = load_map_file_square_tdms_v2(directory)
+    data = maps.load_map_file_square_tdms_v2(directory)
     experiment_name = UFF.filemetadata['Entry_experiment_name']
 
     if not experiment_name:

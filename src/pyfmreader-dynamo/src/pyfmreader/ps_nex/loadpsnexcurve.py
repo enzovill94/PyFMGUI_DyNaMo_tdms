@@ -48,8 +48,19 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
 
     # curve_indices = file_metadata["Entry_tot_nb_curve"] 
     # num_segment = file_metadata['num_segments']
+    num_segments = file_metadata['num_segments']
+    num_segment_arr = np.arange(0,num_segments,1)
 
-    num_segment_arr = [0,1,2]
+    if bool_correct_overshoot:
+        print("Correcting overshoot in the approach segment")
+        if len(num_segment_arr) > 2:
+            first = num_segment_arr[0]
+            last = num_segment_arr[-1]
+            num_segment_arr = [first, last]
+    #     num_segment_arr = [0,1]
+    # else:
+    #     print("No overshoot correction in the approach segment")
+    #     num_segment_arr = [0,1,2]
     # index = 1 if curve_indices == 0 else 3
     
     tdms_groups = tdms_file_ps_nex_file.groups()  ;    tdms_psnex_fc = tdms_groups[0]
@@ -139,6 +150,8 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
     # get segment type contact for final nb points
     if len(num_segment_arr) >= 1:
         num_pts_con = sizes_seg[1]
+        # if bool_correct_overshoot:
+        #     num_pts_con = sizes_seg[1] - 1
     # deflection = deflection[:-num_pts_rm]
     # height = height[num_pts_rm:]
     # print(f'Deflection Length: {len(deflection)}, Height: {len(height)}')
@@ -149,6 +162,9 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
     length_deflection = len(deflection)
     if end_indices[-1] != length_deflection:
         end_indices[-1] = length_deflection
+
+    
+
 
     for idx in range(len(num_segment_arr)):
 
@@ -171,17 +187,20 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
         
         segment_duration = curve_properties[str(curve_index)][segment_id][f"segment_{segment_id}_duration_(ticks)"]*tick_time_s
         
+        
+        
         segment_num_points = curve_properties[str(curve_index)][segment_id][f"segment_{segment_id}_nb_points_cal"]
 
         # TO DO: Time can be exported, handle this situation.
         #segment_formated_data["time"] = np.linspace(0, segment_duration, segment_num_points, endpoint=False)
         
-        # print (f"segment relative position: {end_pos-start_pos}, segment duration: {segment_duration}")
+        # print (f"segment: {segment_type}, segment relative position: {end_pos-start_pos}, segment duration: {segment_duration}")
         segment_formated_data["time"] = np.linspace(0, segment_duration, end_pos-start_pos, endpoint=False)
         #segment_formated_data["time"] = np.linspace(0, segment_duration, segment_num_points, endpoint=False)
 
         segment_formated_data[height_channel_key] = height[start_pos:end_pos]
         segment_formated_data['vDeflection'] = deflection[start_pos:end_pos]
+        segment_formated_data['duration'] = segment_duration
 
         segment = Segment(file_id, segment_id, segment_type)
         segment.segment_formated_data = segment_formated_data
@@ -194,27 +213,29 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
         segment.nb_col = len(segment_formated_data.keys())
     
         segment.force_setpoint = segment.segment_metadata[f"segment_{segment_id}_setpoint_(V)"]
-        segment.velocity = segment.segment_metadata[f"segment_{segment_id}_ramp_speed_nm/s"]
+        segment.velocity = segment.segment_metadata[f"segment_{segment_id}_ramp_speed_m/s"]
         
         segment.sampling_rate = segment.segment_metadata[f"segment_{segment_id}_sampling_rate_(S/s)"]
         segment.z_displacement = segment.segment_metadata[f"segment_{segment_id}_Z_retract_length_(V)"]
         
         
         # print(segment.segment_type)
-        if segment.segment_type == "App":
-            #if we overshoot in the appracoh 
+        if segment.segment_type in ["App", "Approach"]:
+            #if we overshoot in the approach
+            max_height_index = np.nanargmax(deflection)
             if bool_correct_overshoot:
-                if np.nanargmax(height) != end_pos:
-                    # print("overshoot in the approach, accounted for   ")
-                    end_indices[idx] = np.nanargmax(height)
-                    # Start Contact
-                    start_indices[idx+1] = np.nanargmax(height) + 1
-                    # End Contact
-                    end_indices_last_idx = np.nanargmax(height) + num_pts_con
+                if max_height_index != end_pos:
+                    # Assign max height index to end_indeces
+                    end_indices[idx] = max_height_index
+                    # Assign max height index to the next element of start index,
+                    start_indices[idx+1] = max_height_index + 1
+                    # End index of approach would include 
+                    end_indices_last_idx = max_height_index 
 
                     if end_indices_last_idx > length_deflection:
                         end_indices[idx+1] = end_indices_last_idx
                     end_pos = end_indices[idx]
+                    
                     segment_formated_data["time"] = np.linspace(0, segment_duration, end_pos-start_pos, endpoint=False)
                     # segment_formated_data["time"] = time_tdms[start_pos:end_pos]-time_tdms[start_pos]
                     segment_formated_data[height_channel_key] = height[start_pos:end_pos]
@@ -223,14 +244,22 @@ def loadPSNEXcurve(file_metadata,curve_index = 0,
             force_curve.extend_segments.append((int(segment.segment_id), segment))
                     
             # print("removed overshoot")
-        elif segment.segment_type == "Ret":
+        elif segment.segment_type in ["Ret", "Retract"]:
             #TODO rem half points from each time segment for aligning  
+
+
             if z_sensor_delay>0 :
                 segment_formated_data["time"] = segment_formated_data["time"][:-(num_pts_rm_time)]
             else:
-                segment_formated_data["time"] = segment_formated_data["time"][:]
+                if bool_correct_overshoot:
+                    # print (f'Ret final nb points: {final_nb_points[idx]}, sizes_seg: {sizes_seg}, deflection size: {len(deflection)}')
+                    segment_formated_data["time"] = segment_formated_data["time"][:]
+                else:
+
+                    segment_formated_data["time"] = segment_formated_data["time"][:]
+
             force_curve.retract_segments.append((int(segment.segment_id), segment))
-        elif segment.segment_type == "Con":
+        elif segment.segment_type in ["Con", "Contact"]:
             force_curve.pause_segments.append((int(segment.segment_id), segment))
             # print ("Contact entered")
         elif segment.segment_type == "Modulation":

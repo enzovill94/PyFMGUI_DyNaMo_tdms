@@ -1,0 +1,64 @@
+# Python dependencies for PSNEX Map Analysis GUI
+
+# from setuptools import setup, find_packages
+
+# setup(
+#     name='heatmap',
+#     version='0.1.0',
+#     description='PSNEX Map Analysis GUI',
+#     author='Your Name',
+#     packages=find_packages(where='src'),
+#     package_dir={'': 'src'},
+#     install_requires=[
+#         'PyQt5>=5.15.0',
+#         'pyqtgraph>=0.12.0',
+#         'numpy>=1.20.0',
+#         'pandas>=1.3.0',
+#         'matplotlib>=3.4.0',
+#         'seaborn>=0.11.0',
+#         'tifffile>=2021.0.0',
+#         'scipy>=1.7.0',
+#     ],
+#     python_requires='>=3.9',
+# )
+## instruction to install module once finalized
+# cd /Users/evillz/Github/PyFMGUI_DyNaMo_tdms/src/heatmap
+# pip install -e .
+
+
+# Core GUI framework
+PyQt5>=5.15.0
+pyqtgraph>=0.12.0
+
+# Data processing
+numpy>=1.20.0
+pandas>=1.3.0
+scipy>=1.7.0
+
+# Visualization
+matplotlib>=3.4.0
+seaborn>=0.11.0
+
+# Image processing
+Pillow>=8.0.0
+scikit-image>=0.18.0
+
+# TDMS file handling (if not already installed)
+npTDMS>=1.2.0
+
+# Progress bars and UI enhancements
+tqdm>=4.62.0
+
+# File format support
+h5py>=3.1.0
+openpyxl>=3.0.0
+
+# Custom dependencies (from parent project)
+# pyfmreader  # This should be installed from the parent project
+
+# Development dependencies (optional)
+pytest>=6.2.0
+pytest-qt>=4.0.0
+pytest-cov>=2.12.0
+black>=21.0
+flake8>=3.9.0

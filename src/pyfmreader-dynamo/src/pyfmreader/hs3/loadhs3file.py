@@ -26,7 +26,7 @@ def loadHS3file(filepath, UFF):
     
     #TODO what the hall have you done 
     # UFF.isFV = UFF.filemetadata["mapping_bool"]
-    UFF.filemetadata['isFV'] = False
+#     UFF.filemetadata['isFV'] = False
     # UFF.filemetadata['num_x_pixels'] = 32
     # UFF.filemetadata['num_y_pixels'] = 32
     # UFF.filemetadata['scan_size_x'] = 0

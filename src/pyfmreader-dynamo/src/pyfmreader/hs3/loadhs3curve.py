@@ -68,7 +68,7 @@ def loadhs3curve(file_metadata,curve_index = 0):
         i += 1
 
     # dt = tdms_file[main_group][channel_names_dict[0]].properties["wf_increment"]
-    time_s = tdms_file[main_group][channel_names_dict[0]].time_track()
+    # time_s = tdms_file[main_group][channel_names_dict[0]].time_track()
 
 
     force_curve = ForceCurve(curve_index, file_id)
@@ -101,8 +101,9 @@ def loadhs3curve(file_metadata,curve_index = 0):
     seg_arr = np.array([app_ms, con_ms, ret_ms]) *1e-3 # convert to sec
 
     SR = file_metadata['reading_sample_rate_Hz']
-    rel_SR = SR/dec_arr
-    file_metadata['relative_sr'] = rel_SR
+    rel_SR = SR/dec_arr ### here is the problem
+    # file_metadata['relative_sr'] = rel_SR
+    file_metadata['relative_sr'] = dec_arr/SR  
     sizes_per_seg = (rel_SR * seg_arr).astype(int)
     start_indices = np.concatenate(([0], np.cumsum(sizes_per_seg[:-1])))
     end_indices = start_indices + sizes_per_seg
@@ -149,6 +150,8 @@ def loadhs3curve(file_metadata,curve_index = 0):
         segment.vdeflection = segment_formated_data['vDeflection'][-1]  # Last value of the deflection
         segment.sampling_rate = rel_SR[idx]
         segment.z_displacement = height[-1]
+        segment.force = deflection[start_pos:end_pos] * file_metadata['defl_sens_nmbyV'] * 1e-09 * file_metadata['spring_const_Nbym']  # Convert to m 
+        
         
         
         # print(segment.segment_type)
@@ -156,7 +159,7 @@ def loadhs3curve(file_metadata,curve_index = 0):
             force_curve.extend_segments.append((int(segment.segment_id), segment))
         elif segment.segment_type == "Ret":
             #TODO rem half points from each time segment for aligning  
-            segment_formated_data["time"] = segment_formated_data["time"][:]
+            # segment_formated_data["time"] = segment_formated_data["time"]
             force_curve.retract_segments.append((int(segment.segment_id), segment))
         elif segment.segment_type == "Con":
             force_curve.pause_segments.append((int(segment.segment_id), segment))

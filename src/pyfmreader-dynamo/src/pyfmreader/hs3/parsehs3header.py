@@ -40,7 +40,8 @@ def parseHS3header(filepath):
         "file_path": filepath,
         "params_file":    os.path.basename(params_file),
         "params_folder":  directory,
-        "file_size_bytes": os.path.getsize(filepath)
+        "file_size_bytes": os.path.getsize(filepath),
+        "Entry_filename": os.path.split(filepath)[-1]
     }
     file_metadata["height_channel_key"] = "Piezo"
     file_metadata["deflection_chanel_key"] = "Deflection"   

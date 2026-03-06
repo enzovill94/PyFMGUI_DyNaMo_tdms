@@ -9,6 +9,7 @@ from .jpk.loadjpkthermalfile import loadJPKThermalFile
 from .nanosc.loadnanoscfile import loadNANOSCfile
 # from .ps_nex.loadpsnexfile import loadPSNEXfile
 from .ps_nex.loadpsnexfile import loadPSNEXfile
+from .ps_nex.parseTDMS import grab_tdms
 from .load_uff import loadUFFtxt
 from .uff import UFF
 
@@ -42,6 +43,8 @@ def loadfile(filepath, **kwargs):
         hs3_bool = kwargs['hs3_bool']
     else:
         hs3_bool = False
+
+
     
     split_path = filepath.split(os.extsep)
     # Depending on the configuration of the OS, JPK files have the following
@@ -50,6 +53,9 @@ def loadfile(filepath, **kwargs):
     else: filesuffix = split_path[-1]
 
     uffobj = UFF()
+
+        
+        
 
     if filesuffix[1:].isdigit() or filesuffix in nanoscfiles:
         return loadNANOSCfile(filepath, uffobj)

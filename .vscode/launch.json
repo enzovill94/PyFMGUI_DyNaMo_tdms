@@ -52,7 +52,8 @@
             "console": "integratedTerminal",                // Uses VS Code terminal for I/O
             "env": {
                 "SCREEN_IDX": "2",
-                "workingDirectory": "/Users/evillz/Data/article/2025_07_01_THP1_phd/cell2/",
+                // "workingDirectory": "/Users/evillz/Data/article/2025_07_01_THP1_phd/cell2/",
+                "workingDirectory": "/Users/evillz/Data/article/final_yey",
             }
         },
         {
@@ -65,6 +66,15 @@
             //     "SCREEN_IDX": "2",
             //     "workingDirectory": "/Users/evillz/Data/article/2025_07_01_THP1_phd/cell2/",
             // }
+        },
+        {
+            "name": "TetherViewer_GUI_V3_jpk",  // Appears in the debug dropdown
+            "type": "debugpy",                             // Correct for Python debugging
+            "request": "launch",                           // You're launching a file, no   t attaching
+            "program": "${workspaceFolder}/PyFMGUI_DyNaMo/scripts/tether_analysis_gui_v3_filter_JPK.py",  // Full path to your entrypoint script
+            "console": "integratedTerminal",                // Uses VS Code terminal for I/O
         }
+    
     ]
+
 }
