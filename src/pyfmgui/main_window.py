@@ -444,7 +444,8 @@ class MainWindow(QtWidgets.QMainWindow):
 			if self.session.hertz_fit_widget is not None:
 				self.session.hertz_fit_widget.do_hertzfit()
 
-	def dragEnterEvent(self, event):		if event.mimeData().hasUrls():
+	def dragEnterEvent(self, event):
+		if event.mimeData().hasUrls():
 			event.accept()
 		else:
 			event.ignore()

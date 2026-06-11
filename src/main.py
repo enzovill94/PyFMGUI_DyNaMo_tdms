@@ -1,5 +1,6 @@
 import sys
 import multiprocessing
+import logging
 import PyQt5
 from pyqtgraph.Qt import QtGui, QtCore, QtWidgets
 
@@ -57,5 +58,14 @@ if __name__ == '__main__':
 	# Add support for multiprocessing in frozen app
 	# # See http://docs.python.org/3/library/multiprocessing.html
 	multiprocessing.freeze_support()
+
+	# Configure logging.  Pass --debug on the command line to see debug output.
+	log_level = logging.DEBUG if '--debug' in sys.argv else logging.INFO
+	logging.basicConfig(
+		level=log_level,
+		format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+		datefmt='%H:%M:%S',
+	)
+
 	# Launch
-	main()	
+	main()

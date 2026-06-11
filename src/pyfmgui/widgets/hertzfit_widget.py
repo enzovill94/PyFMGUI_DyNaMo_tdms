@@ -10,6 +10,7 @@ import pyfmgui.const as cts
 from pyfmgui.threading import Worker
 from pyfmgui.compute import compute
 from pyfmgui.widgets.get_params import get_params
+from pyfmgui import session_file as _sf
 
 from pyfmrheo.utils.force_curves import get_poc_RoV_method, get_poc_regulaFalsi_method, correct_tilt, correct_offset
 
@@ -26,6 +27,8 @@ class HertzFitWidget(QtWidgets.QWidget):
         self.init_gui()
         if self.session.loaded_files != {}:
             self.updateCombo()
+        # Apply any params that were pending from a session load
+        self._apply_pending_params()
 
     def init_gui(self):
         main_layout = QtWidgets.QHBoxLayout()
@@ -101,7 +104,21 @@ class HertzFitWidget(QtWidgets.QWidget):
         main_layout.addWidget(self.l, 3)
     
     def closeEvent(self, evnt):
+        # Cache current params so they survive widget close/reopen and session save
+        try:
+            self.session.widget_params_cache['HertzFit'] = _sf._params_to_dict(self.params)
+        except Exception:
+            pass
         self.session.hertz_fit_widget = None
+
+    def _apply_pending_params(self):
+        """Apply params stored from a session load (deferred until widget opens)."""
+        pending = getattr(self.session, 'pending_widget_params', {}).pop('HertzFit', None)
+        if pending:
+            try:
+                _sf._apply_dict_to_params(self.params, pending)
+            except Exception:
+                pass
     
     def clear(self):
         self.combobox.clear()
@@ -116,7 +133,6 @@ class HertzFitWidget(QtWidgets.QWidget):
         else:
             filedict = {self.session.current_file.filemetadata['Entry_filename']:self.session.current_file}
         if self.params.child('General Options').child('Correct App').value():
-            print('trueDat')
             logger.info('correct app is true')
         params = get_params(self.params, "HertzFit")
         logger.info('Started ElasticityFit...')
@@ -262,9 +278,7 @@ class HertzFitWidget(QtWidgets.QWidget):
         poc_win = hertz_params.child('PoC Window').value() / 1e9
         poc_sigma = hertz_params.child('Sigma').value()
 
-        print(self.current_file)
-        print(type(self.current_file))
-        print(self.current_file.filemetadata['file_path'])
+        logger.debug(f'Current file: {self.current_file}, path: {self.current_file.filemetadata["file_path"]}')
         ## added 
         # bool_correct_overshoot = self.params.child('Display Options').child('Correct Overshoot').value()    
         force_curve = self.current_file.getcurve(current_curve_indx, bool_correct_overshoot = self.params.child('General Options').child('Correct App').value())

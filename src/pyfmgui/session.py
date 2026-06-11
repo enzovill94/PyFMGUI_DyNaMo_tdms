@@ -36,6 +36,10 @@ class Session:
         'microrheo_results': None
         }
         self.tether_viewer_widget = None
+        # Cached widget params (persisted across widget open/close)
+        self.widget_params_cache = {}
+        # Pending params to apply when a widget is next opened
+        self.pending_widget_params = {}
     
     def remove_piezo_char_data(self):
         self.piezo_char_data = None
