@@ -23,6 +23,7 @@ from pyfmgui.widgets.macro_widget import MacroWidget
 from pyfmgui.widgets.logger_dialog import LoggerDialog
 from pyfmgui.widgets.progress_dialog import ProgressDialog
 from pyfmgui.widgets.tetherviewer_widget import TetherViewerWidget
+from pyfmgui import session_file as sf
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -74,6 +75,10 @@ class MainWindow(QtWidgets.QMainWindow):
 		file.addAction("Load Single File")
 		file.addAction("Load Folder")
 		file.addAction("Export Results")
+		file.addSeparator()
+		file.addAction("Save Session")
+		file.addAction("Load Session")
+		file.addSeparator()
 		file.addAction("Remove All Files And Results")
 		view = bar.addMenu("View")
 		view.addAction("Cascade")
@@ -277,6 +282,15 @@ class MainWindow(QtWidgets.QMainWindow):
 				valid_files = self.getFileList(dirname)
 				if valid_files != []:
 					self.load_files(valid_files)
+		elif q.text() == "Save Session":
+			self.save_pyfm_session()
+		elif q.text() == "Load Session":
+			fname, _ = QtWidgets.QFileDialog.getOpenFileName(
+				self, "Load PyFMGUI Session", "./",
+				"PyFMGUI session files (*.pyfmsession);;All files (*.*)"
+			)
+			if fname:
+				self.load_pyfm_session(fname)
 		elif q.text() == "Cascade":
 			self.mdi.cascadeSubWindows()
 		elif q.text() == "Tiled":
@@ -334,6 +348,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			self.session.vdrag_widget.updateCombo()
 		if self.session.microrheo_widget:
 			self.session.microrheo_widget.updateCombo()
+		self._apply_pending_session()
 	
 	def remove_all_files_and_results(self):
 		self.session.remove_data_and_results()
@@ -350,8 +365,86 @@ class MainWindow(QtWidgets.QMainWindow):
 		if self.session.microrheo_widget:
 			self.session.microrheo_widget.clear()
     
-	def dragEnterEvent(self, event):
-		if event.mimeData().hasUrls():
+	# ------------------------------------------------------------------
+	# PyFMGUI session save / load
+	# ------------------------------------------------------------------
+
+	def _session_widgets(self):
+		"""Return a label->widget mapping for all analysis widgets."""
+		return {
+			"HertzFit":   self.session.hertz_fit_widget,
+			"TingFit":    self.session.ting_fit_widget,
+			"PiezoChar":  self.session.piezo_char_widget,
+			"VDrag":      self.session.vdrag_widget,
+			"Microrheo":  self.session.microrheo_widget,
+		}
+
+	def save_pyfm_session(self):
+		"""Save the current session (file list + parameters) to a .pyfmsession file."""
+		if not self.session.loaded_files:
+			QtWidgets.QMessageBox.information(self, "Save Session", "No files loaded to save.")
+			return
+		path, _ = QtWidgets.QFileDialog.getSaveFileName(
+			self, "Save PyFMGUI Session", "session.pyfmsession",
+			"PyFMGUI session files (*.pyfmsession);;All files (*.*)"
+		)
+		if not path:
+			return
+		if not path.endswith(sf.EXTENSION):
+			path += sf.EXTENSION
+		try:
+			sf.save_session(path, self.session, self._session_widgets())
+			QtWidgets.QMessageBox.information(
+				self, "Save Session",
+				f"Session saved to:\n{path}"
+			)
+		except Exception as e:
+			QtWidgets.QMessageBox.critical(self, "Save Session", f"Failed to save session:\n{e}")
+
+	def load_pyfm_session(self, path):
+		"""Load a .pyfmsession file, prompt the user, then load files and restore params."""
+		data = sf.load_session(path)
+		if data is None:
+			QtWidgets.QMessageBox.critical(
+				self, "Load Session",
+				f"Could not read session file:\n{path}\n\nMake sure it is a valid .pyfmsession file."
+			)
+			return
+
+		file_paths = data.get("file_paths", [])
+		existing = [p for p in file_paths if os.path.isfile(p)]
+		missing  = [p for p in file_paths if not os.path.isfile(p)]
+
+		# Ask user what to do
+		dialog = _LoadSessionDialog(len(existing), missing, self)
+		result = dialog.exec_()
+		if result == QtWidgets.QDialog.Rejected:
+			return
+		run_analysis = dialog.run_analysis()
+
+		if not existing:
+			QtWidgets.QMessageBox.warning(self, "Load Session", "No accessible data files found in session.")
+			return
+
+		# Store the session data so we can apply params after files finish loading
+		self._pending_session_data = data
+		self._pending_run_analysis = run_analysis
+
+		self.load_files(existing)
+
+	def _apply_pending_session(self):
+		"""Called from close_dialog() to apply params after files are loaded."""
+		data = getattr(self, "_pending_session_data", None)
+		if data is None:
+			return
+		self._pending_session_data = None
+		sf.apply_session(data, self.session, self._session_widgets())
+		if getattr(self, "_pending_run_analysis", False):
+			self._pending_run_analysis = False
+			if self.session.hertz_fit_widget is not None:
+				self.session.hertz_fit_widget.do_hertzfit()
+
+	def dragEnterEvent(self, event):		if event.mimeData().hasUrls():
 			event.accept()
 		else:
 			event.ignore()
@@ -361,15 +454,21 @@ class MainWindow(QtWidgets.QMainWindow):
 		paths_url = event.mimeData().urls()
 		paths = [os.path.normpath(p.toLocalFile()) for p in paths_url]
 
-		#paths_url = event.mimeData().urls();
-		#paths =[p.path() for p in paths_url]
+		# Check if a .pyfmsession file was dropped
+		session_files = [p for p in paths if p.endswith(sf.EXTENSION)]
+		if session_files:
+			self.load_pyfm_session(session_files[0])
+			return
+
 		valid_files = []
 		for path in paths:
 			if os.path.isdir(path):
-				valid_files= self.getFileList(path)
-			else:valid_files.append(path)
+				valid_files = self.getFileList(path)
+			else:
+				valid_files.append(path)
 
-		if valid_files != []:self.load_files(valid_files)
+		if valid_files != []:
+			self.load_files(valid_files)
 
 
 	def keyPressEvent(self, event):
@@ -380,3 +479,50 @@ class MainWindow(QtWidgets.QMainWindow):
 			if selected_item:
 				(selected_item.parent() or self.session.data_viewer_widget.tree.invisibleRootItem()).removeChild(selected_item)
 				self.session.loaded_files.pop(key)
+
+
+class _LoadSessionDialog(QtWidgets.QDialog):
+	"""Prompt shown when opening a .pyfmsession file."""
+
+	def __init__(self, n_found, missing, parent=None):
+		super().__init__(parent)
+		self.setWindowTitle("Load PyFMGUI Session")
+		self.setMinimumWidth(380)
+		self.setWindowModality(QtCore.Qt.ApplicationModal)
+
+		layout = QtWidgets.QVBoxLayout(self)
+
+		info = f"<b>{n_found}</b> data file(s) found in session."
+		if missing:
+			info += (
+				f"<br><br><span style='color:orange;'>⚠ {len(missing)} file(s) not found "
+				f"on this machine and will be skipped:</span><br>"
+				+ "<br>".join(f"&nbsp;&nbsp;{os.path.basename(p)}" for p in missing[:8])
+				+ ("…" if len(missing) > 8 else "")
+			)
+		lbl = QtWidgets.QLabel(info)
+		lbl.setWordWrap(True)
+		layout.addWidget(lbl)
+
+		layout.addSpacing(12)
+
+		group = QtWidgets.QGroupBox("After loading files:")
+		g_layout = QtWidgets.QVBoxLayout(group)
+		self._rb_load_only = QtWidgets.QRadioButton("Load files and restore settings only")
+		self._rb_load_only.setChecked(True)
+		self._rb_run = QtWidgets.QRadioButton("Load files, restore settings and run Elasticity Fit")
+		g_layout.addWidget(self._rb_load_only)
+		g_layout.addWidget(self._rb_run)
+		layout.addWidget(group)
+
+		layout.addSpacing(8)
+
+		btns = QtWidgets.QDialogButtonBox(
+			QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+		)
+		btns.accepted.connect(self.accept)
+		btns.rejected.connect(self.reject)
+		layout.addWidget(btns)
+
+	def run_analysis(self):
+		return self._rb_run.isChecked()

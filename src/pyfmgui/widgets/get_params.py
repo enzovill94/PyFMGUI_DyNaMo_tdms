@@ -90,6 +90,8 @@ def get_params(params, method):
         param_dict['model_type'] = ting_params.child('Model Type').value()
         param_dict['smoothing_win'] = ting_params.child('Smoothing Window').value()
         param_dict['contact_offset'] = ting_params.child('Contact Offset').value() / 1e6 #um
+        param_dict['ret_mask'] = ting_params.child('Retract Ind. Mask').value()
+        param_dict['ret_force_mask'] = ting_params.child('Retract Force Mask').value()
         param_dict['slope'] = ting_params.child('Init Slope').value()
         param_dict['fit_line'] = ting_params.child('Fit Line to non contact').value()
         param_dict['pts_downsample'] = ting_params.child('Downsample Pts.').value()

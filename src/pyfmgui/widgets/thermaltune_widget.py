@@ -39,7 +39,11 @@ class ThermalTuneWidget(QtWidgets.QWidget):
         self.sader_canti_list = {}
         self.filename = None
         self.init_gui()
-        self.sader_login()
+        try:
+            self.sader_login()
+        except Exception as e:
+            print(f"Auto-login failed (non-blocking): {e}")
+            self.open_msg_box("Could not auto-login. Please enter credentials manually.")
 
     def init_gui(self):
         main_layout = QtWidgets.QHBoxLayout()
@@ -336,7 +340,23 @@ class ThermalTuneWidget(QtWidgets.QWidget):
         </saderrequest>'''
         headers = {'user-agent': cts.SADER_API_version, 'Content-type': cts.SADER_API_type}
         r = requests.post(cts.SADER_API_url, data=payload, headers=headers)
-        doc = etree.fromstring(r.content)
+        
+        # Debug: print response status and content
+        print(f"Sader Response Status: {r.status_code}")
+        print(f"Sader Response Content: {r.content}")
+        print(f"Sader Response Text: {r.text}")
+        
+        if r.status_code != 200:
+            raise Exception(f"Sader API returned status {r.status_code}: {r.text}")
+        
+        if not r.content or r.content.strip() == b'':
+            raise Exception("Sader API returned empty response")
+        
+        try:
+            doc = etree.fromstring(r.content)
+        except Exception as e:
+            print(f"XML Parse Error: {e}")
+            raise Exception(f"Failed to parse Sader response as XML: {e}")
         
         cantilever_ids = doc.findall('./cantilevers/cantilever/id')
         cantilever_labels = doc.findall('./cantilevers/cantilever/label')
@@ -367,8 +387,9 @@ class ThermalTuneWidget(QtWidgets.QWidget):
             self.params.child('Calibration Params').child('Cantilever Code').setLimits(list(self.sader_canti_list.keys()))
             # self.write_to_params_layout("Login was succesful!")
             self.open_msg_box("Login was successful!")
-        except requests.exceptions.RequestException:
-            self.open_msg_box("Could not Login!")
+        except (requests.exceptions.RequestException, Exception) as e:
+            print(f"Login error: {e}")
+            self.open_msg_box(f"Could not Login! Error: {str(e)}")
     
     def do_thermalfit(self):
         # Change to the routines present in PyFMRheo

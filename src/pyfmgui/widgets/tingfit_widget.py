@@ -248,6 +248,8 @@ class TingFitWidget(QtWidgets.QWidget):
         rampspeed = ting_params.child('Ramp Speed').value() / 1e6
         # print (f'rampspeed: {rampspeed} m/s ')
         contact_offset = ting_params.child('Contact Offset').value() / 1e6
+        ret_mask = ting_params.child('Retract Ind. Mask').value()
+        ret_force_mask = ting_params.child('Retract Force Mask').value()
         t0_scaling = ting_params.child('t0').value()
         pts_downsample = ting_params.child('Downsample Pts.').value()
         correct_tilt_flag = analysis_params.child('Correct Tilt').value()
@@ -328,12 +330,35 @@ class TingFitWidget(QtWidgets.QWidget):
                 ext_data.indentation, ext_data.force, ret_data.indentation, ret_data.force, poly_order=polyordr, speed=rampspeed)
         self.p1.plot(ext_data.indentation, ext_data.force)
         self.p1.plot(ret_data.indentation, ret_data.force)
+
+        ret_indentation_fit = ret_data.indentation
+        ret_force_fit = ret_data.force
+        ret_time_fit = ret_data.time
+
+        if ret_mask == 0:
+            ret_mask = None
+        if ret_force_mask == 0:
+            ret_force_mask = None
+
+        if ret_mask is not None:
+            thresh_ret = ret_indentation_fit.max() - ret_indentation_fit.max() * ret_mask
+            mask_segoi = ret_indentation_fit > thresh_ret
+            ret_indentation_fit = ret_indentation_fit[mask_segoi]
+            ret_force_fit = ret_force_fit[mask_segoi]
+            ret_time_fit = ret_time_fit[mask_segoi]
+
+        if ret_force_mask is not None:
+            thresh_ret = ret_force_fit.max() - ret_force_fit.max() * ret_force_mask
+            mask_segoi = ret_force_fit > thresh_ret
+            ret_indentation_fit = ret_indentation_fit[mask_segoi]
+            ret_force_fit = ret_force_fit[mask_segoi]
+            ret_time_fit = ret_time_fit[mask_segoi]
         
         idx_tc = (np.abs(ext_data.indentation - 0)).argmin()
         t0 = ext_data.time[-1]
-        indentation = np.r_[ext_data.indentation, ret_data.indentation]
-        time = np.r_[ext_data.time, ret_data.time + t0]
-        force = np.r_[ext_data.force, ret_data.force]
+        indentation = np.r_[ext_data.indentation, ret_indentation_fit]
+        time = np.r_[ext_data.time, ret_time_fit + t0]
+        force = np.r_[ext_data.force, ret_force_fit]
         fit_mask = indentation > (-1 * contact_offset)
         tc = time[idx_tc]
         ind_fit = indentation[fit_mask]
@@ -344,6 +369,8 @@ class TingFitWidget(QtWidgets.QWidget):
         time_fit = time_fit - time_fit[0] - tc_fit
         
         downfactor= len(time_fit) // pts_downsample
+        if downfactor == 0:
+            downfactor = 1
         idxDown = list(range(0, len(time_fit), downfactor))
 
         self.p2.plot(time_fit[idxDown], force_fit[idxDown])
@@ -426,6 +453,7 @@ class TingFitWidget(QtWidgets.QWidget):
     def updateParams(self):
         # Updates params related to the current file
         analysis_params = self.params.child('Analysis Params')
+        ting_params = self.params.child('Ting Fit Params')
         analysis_params.child('Height Channel').setValue(self.current_file.filemetadata['height_channel_key'])
         if self.session.global_k is None:
             analysis_params.child('Spring Constant').setValue(self.current_file.filemetadata['spring_const_Nbym'])
@@ -442,3 +470,5 @@ class TingFitWidget(QtWidgets.QWidget):
         analysis_params.child('Perc. Max Offset').sigValueChanged.connect(self.updatePlots)
         analysis_params.child('Abs. Min Offset').sigValueChanged.connect(self.updatePlots)
         analysis_params.child('Abs. Max Offset').sigValueChanged.connect(self.updatePlots)
+        ting_params.child('Retract Ind. Mask').sigValueChanged.connect(self.updatePlots)
+        ting_params.child('Retract Force Mask').sigValueChanged.connect(self.updatePlots)

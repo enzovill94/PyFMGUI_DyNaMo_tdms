@@ -52,9 +52,28 @@ class HertzFitWidget(QtWidgets.QWidget):
 
         self.l2 = pg.GraphicsLayoutWidget()
 
+        self.exportHtmlButton = QtWidgets.QPushButton("Export HTML")
+        self.exportHtmlButton.clicked.connect(self.export_hertz_html)
+
+        # File range row
+        range_layout = QtWidgets.QHBoxLayout()
+        range_layout.addWidget(QtWidgets.QLabel("Files:"))
+        range_layout.addWidget(QtWidgets.QLabel("From"))
+        self.exportRangeFrom = QtWidgets.QSpinBox()
+        self.exportRangeFrom.setMinimum(1)
+        self.exportRangeFrom.setValue(1)
+        range_layout.addWidget(self.exportRangeFrom)
+        range_layout.addWidget(QtWidgets.QLabel("To"))
+        self.exportRangeTo = QtWidgets.QSpinBox()
+        self.exportRangeTo.setMinimum(1)
+        self.exportRangeTo.setValue(1)
+        range_layout.addWidget(self.exportRangeTo)
+
         params_layout.addWidget(self.combobox, 1)
         params_layout.addWidget(self.paramTree, 3)
         params_layout.addWidget(self.pushButton, 1)
+        params_layout.addWidget(self.exportHtmlButton, 1)
+        params_layout.addLayout(range_layout)
         params_layout.addWidget(self.l2, 2)
 
         self.l = pg.GraphicsLayoutWidget()
@@ -190,6 +209,10 @@ class HertzFitWidget(QtWidgets.QWidget):
         index = self.combobox.findText(self.current_file.filemetadata['Entry_filename'], QtCore.Qt.MatchFlag.MatchContains)
         if index >= 0:
             self.combobox.setCurrentIndex(index)
+        n_files = len(self.session.loaded_files)
+        self.exportRangeFrom.setMaximum(n_files)
+        self.exportRangeTo.setMaximum(n_files)
+        self.exportRangeTo.setValue(n_files)
         self.update()
     
     def mouseMoved(self,event):
@@ -301,6 +324,8 @@ class HertzFitWidget(QtWidgets.QWidget):
             poc = [comp_PoC[0], 0]
         else:
             poc = [0, 0]
+
+        self.poc = poc
 
         force_curve.get_force_vs_indentation(poc, spring_k)
 
@@ -415,6 +440,391 @@ class HertzFitWidget(QtWidgets.QWidget):
         self.max_val_line = pg.InfiniteLine(pos=max_val, angle=angle, pen='y', movable=False, label='Max', labelOpts={'color':'y', 'position':0.7})
         self.p2.addItem(self.min_val_line, ignoreBounds=True)
         self.p2.addItem(self.max_val_line, ignoreBounds=True)
+
+    def _process_curve_for_export(self, file_obj, curve_indx):
+        """Process a single curve and return (indentation, force, poc) using current params."""
+        analysis_params = self.params.child('Analysis Params')
+        height_channel = analysis_params.child('Height Channel').value()
+        deflection_sens = analysis_params.child('Deflection Sensitivity').value() / 1e9
+        spring_k = analysis_params.child('Spring Constant').value()
+        curve_seg = analysis_params.child('Curve Segment').value()
+        correct_tilt_flag = analysis_params.child('Correct Tilt').value()
+
+        hertz_params = self.params.child('Hertz Fit Params')
+        poc_method = hertz_params.child('PoC Method').value()
+        poc_win = hertz_params.child('PoC Window').value() / 1e9
+        poc_sigma = hertz_params.child('Sigma').value()
+
+        force_curve = file_obj.getcurve(
+            curve_indx,
+            bool_correct_overshoot=self.params.child('General Options').child('Correct App').value()
+        )
+        force_curve.preprocess_force_curve(deflection_sens, height_channel)
+
+        if file_obj.filemetadata['file_type'] in cts.jpk_file_extensions:
+            force_curve.shift_height()
+
+        ext_data = force_curve.extend_segments[0][1]
+        ret_data = force_curve.retract_segments[-1][1]
+        seg_data = ext_data if curve_seg == 'extend' else ret_data
+
+        # Offset range
+        offset_type = analysis_params.child('Offset Type').value()
+        if offset_type == 'percentage':
+            deltaz = seg_data.zheight.max() - seg_data.zheight.min()
+            maxperc = analysis_params.child('Perc. Max Offset').value() / 1e2
+            minperc = analysis_params.child('Perc. Min Offset').value() / 1e2
+            maxoffset = seg_data.zheight.min() + deltaz * maxperc
+            minoffset = seg_data.zheight.min() + deltaz * minperc
+        else:
+            maxoffset = analysis_params.child('Abs. Max Offset').value() / 1e9
+            minoffset = analysis_params.child('Abs. Min Offset').value() / 1e9
+
+        if correct_tilt_flag:
+            seg_data.vdeflection = correct_tilt(
+                seg_data.zheight, seg_data.vdeflection, maxoffset, minoffset
+            )
+        else:
+            seg_data.vdeflection = correct_offset(
+                seg_data.zheight, seg_data.vdeflection, maxoffset, minoffset
+            )
+
+        comp_PoC = [0, 0]
+        if poc_method == 'RoV':
+            comp_PoC = get_poc_RoV_method(seg_data.zheight, seg_data.vdeflection, poc_win)
+        else:
+            comp_PoC = get_poc_regulaFalsi_method(seg_data.zheight, seg_data.vdeflection, poc_sigma)
+
+        poc = [comp_PoC[0], 0] if comp_PoC is not None else [0, 0]
+        force_curve.get_force_vs_indentation(poc, spring_k)
+
+        if curve_seg == 'extend':
+            indentation = ext_data.indentation
+            force = ext_data.force - ext_data.force[0]
+        else:
+            indentation = ret_data.indentation
+            force = ret_data.force - ret_data.force[-1]
+
+        return indentation, force, poc
+
+    def export_hertz_html(self):
+        """Export Force-Indentation Hertz Fits for a range of files to an interactive HTML file."""
+        if not self.current_file:
+            return
+
+        try:
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+            import plotly.io as pio
+            import datetime
+
+            file_ids = list(self.session.loaded_files.keys())
+            n_total = len(file_ids)
+            if n_total == 0:
+                return
+
+            idx_from = self.exportRangeFrom.value() - 1   # 0-based
+            idx_to = min(self.exportRangeTo.value(), n_total) - 1  # 0-based inclusive
+
+            if idx_from > idx_to:
+                idx_from, idx_to = idx_to, idx_from
+
+            selected_ids = file_ids[idx_from: idx_to + 1]
+            n_files = len(selected_ids)
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"hertz_fit_export_{timestamp}.html"
+
+            html_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self,
+                "Export Hertz Fit as HTML",
+                default_filename,
+                "HTML files (*.html);;All files (*.*)"
+            )
+
+            if not html_path:
+                return
+
+            # Progress dialog
+            progress = QtWidgets.QProgressDialog(
+                "Exporting Hertz fits...", "Cancel", 0, n_files, self
+            )
+            progress.setWindowTitle("Exporting HTML")
+            progress.setWindowModality(QtCore.Qt.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+
+            n_cols = 2
+            n_rows = (n_files + n_cols - 1) // n_cols
+
+            subplot_titles = [fid[:40] for fid in selected_ids]
+            if n_rows > 1:
+                vertical_spacing = min(0.05, 0.8 / (n_rows - 1))
+            else:
+                vertical_spacing = 0.05
+
+            fig = make_subplots(
+                rows=n_rows,
+                cols=n_cols,
+                subplot_titles=subplot_titles,
+                vertical_spacing=vertical_spacing,
+                horizontal_spacing=0.08
+            )
+
+            for plot_idx, file_id in enumerate(selected_ids):
+                if progress.wasCanceled():
+                    progress.close()
+                    return
+                progress.setLabelText(f"Processing {plot_idx + 1}/{n_files}: {file_id[:50]}")
+                progress.setValue(plot_idx)
+                QtWidgets.QApplication.processEvents()
+                row = (plot_idx // n_cols) + 1
+                col = (plot_idx % n_cols) + 1
+                file_obj = self.session.loaded_files[file_id]
+
+                # Pick first curve index that has a fit result for this file
+                file_hertz_result = self.session.hertz_fit_results.get(file_id, None)
+                curve_indx = 0
+                hertz_E = None
+                hertz_d0 = 0.0
+                hertz_redchi = None
+                fit_data = None
+
+                if file_hertz_result is not None:
+                    for cidx, cresult in file_hertz_result:
+                        if cresult is not None:
+                            curve_indx = cidx
+                            hertz_E = cresult.E0
+                            hertz_d0 = cresult.delta0
+                            hertz_redchi = cresult.redchi
+                            fit_data = cresult
+                            break
+
+                try:
+                    indentation, force, poc = self._process_curve_for_export(file_obj, curve_indx)
+                except Exception:
+                    continue
+
+                x_plot = indentation - hertz_d0
+                show_legend = plot_idx == 0
+
+                fig.add_trace(go.Scatter(
+                    x=x_plot, y=force,
+                    mode='lines',
+                    name='Force-Indentation',
+                    line=dict(color='blue', width=1),
+                    legendgroup='data',
+                    showlegend=show_legend
+                ), row=row, col=col)
+
+                if fit_data is not None:
+                    y_fit = fit_data.eval(indentation)
+                    fig.add_trace(go.Scatter(
+                        x=x_plot, y=y_fit,
+                        mode='lines',
+                        name='Hertz Fit',
+                        line=dict(color='green', width=2),
+                        legendgroup='fit',
+                        showlegend=show_legend
+                    ), row=row, col=col)
+
+                    poc_offset = poc[0] if poc else 0.0
+                    annotation_text = (
+                        f"E={hertz_E:.2f} Pa<br>"
+                        f"d0={hertz_d0 + poc_offset:.3E} m<br>"
+                        f"RedChi={hertz_redchi:.3E}"
+                    )
+                    # Plotly axis refs: first subplot is 'x'/'y', subsequent are 'x2','x3',...
+                    ax_suffix = '' if plot_idx == 0 else str(plot_idx + 1)
+                    fig.add_annotation(
+                        text=annotation_text,
+                        xref=f"x{ax_suffix} domain",
+                        yref=f"y{ax_suffix} domain",
+                        x=0.02, y=0.98,
+                        xanchor='left', yanchor='top',
+                        showarrow=False,
+                        font=dict(size=8, color='black'),
+                        bgcolor='rgba(255,255,255,0.8)',
+                        bordercolor='gray',
+                        borderwidth=1,
+                        borderpad=2,
+                        row=row, col=col
+                    )
+
+                fig.update_xaxes(title_text="Indentation (m)", row=row, col=col)
+                fig.update_yaxes(title_text="Force (N)", row=row, col=col)
+
+            progress.setLabelText("Generating HTML...")
+            progress.setValue(n_files)
+            QtWidgets.QApplication.processEvents()
+
+            fig.update_layout(
+                showlegend=True,
+                height=max(400, 400 * n_rows),
+                width=1200,
+                font=dict(size=10),
+                margin=dict(t=40)
+            )
+
+            # --- Collect parameters ---
+            analysis_params = self.params.child('Analysis Params')
+            hertz_params = self.params.child('Hertz Fit Params')
+            gen_opts = self.params.child('General Options')
+
+            p_height_ch   = analysis_params.child('Height Channel').value()
+            p_defl_sens   = analysis_params.child('Deflection Sensitivity').value()
+            p_spring_k    = analysis_params.child('Spring Constant').value()
+            p_curve_seg   = analysis_params.child('Curve Segment').value()
+            p_correct_t   = analysis_params.child('Correct Tilt').value()
+            p_offset_type = analysis_params.child('Offset Type').value()
+            if p_offset_type == 'percentage':
+                p_offset_min = f"{analysis_params.child('Perc. Min Offset').value():.1f} %"
+                p_offset_max = f"{analysis_params.child('Perc. Max Offset').value():.1f} %"
+            else:
+                p_offset_min = f"{analysis_params.child('Abs. Min Offset').value():.1f} nm"
+                p_offset_max = f"{analysis_params.child('Abs. Max Offset').value():.1f} nm"
+
+            p_poc_method  = hertz_params.child('PoC Method').value()
+            p_poc_win     = hertz_params.child('PoC Window').value()
+            p_poc_sigma   = hertz_params.child('Sigma').value()
+            p_fit_range   = hertz_params.child('Fit Range Type').value()
+            p_min_ind     = hertz_params.child('Min Indentation').value()
+            p_max_ind     = hertz_params.child('Max Indentation').value()
+            p_min_f       = hertz_params.child('Min Force').value()
+            p_max_f       = hertz_params.child('Max Force').value()
+            p_downsample  = hertz_params.child('Downsample Signal').value()
+            p_correct_app = gen_opts.child('Correct App').value()
+
+            # Representative metadata from first selected file
+            first_file_obj = self.session.loaded_files[selected_ids[0]]
+            fmeta = first_file_obj.filemetadata
+            m_file_type  = fmeta.get('file_type', 'N/A')
+            m_spring_k   = fmeta.get('spring_const_Nbym', 'N/A')
+            m_defl_sens  = fmeta.get('defl_sens_nmbyV', 'N/A')
+            m_height_key = fmeta.get('height_channel_key', 'N/A')
+
+            # --- Collect per-file results for summary table ---
+            results_rows = []
+            for fid in selected_ids:
+                fhr = self.session.hertz_fit_results.get(fid, None)
+                if fhr is not None:
+                    for cidx, cresult in fhr:
+                        if cresult is not None:
+                            results_rows.append((
+                                fid,
+                                f"{cresult.E0:.2f}",
+                                f"{cresult.delta0:.3E}",
+                                f"{cresult.redchi:.3E}"
+                            ))
+                            break
+                    else:
+                        results_rows.append((fid, '—', '—', '—'))
+                else:
+                    results_rows.append((fid, '—', '—', '—'))
+
+            # --- Build HTML summary block ---
+            gen_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            css = """
+<style>
+  body { font-family: Arial, sans-serif; margin: 16px; color: #222; }
+  h1   { font-size: 1.4em; margin-bottom: 4px; }
+  h2   { font-size: 1.1em; margin: 12px 0 4px; border-bottom: 1px solid #ccc; padding-bottom: 2px; }
+  .meta-grid { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 24px;
+               background: #f5f5f5; padding: 10px 14px; border-radius: 6px;
+               border: 1px solid #ddd; width: fit-content; }
+  .meta-grid .key   { font-weight: bold; white-space: nowrap; }
+  .meta-grid .val   { white-space: nowrap; }
+  table  { border-collapse: collapse; font-size: 0.88em; margin-top: 6px; }
+  th, td { border: 1px solid #ccc; padding: 4px 10px; text-align: left; }
+  th     { background: #e8e8e8; }
+  tr:nth-child(even) { background: #fafafa; }
+  .section { margin-bottom: 18px; }
+</style>"""
+
+            def kv(k, v):
+                return f'<div class="key">{k}</div><div class="val">{v}</div>'
+
+            params_block = f"""
+<div class="section">
+  <h2>Analysis Parameters</h2>
+  <div class="meta-grid">
+    {kv('Height Channel', p_height_ch)}
+    {kv('Deflection Sensitivity', f'{p_defl_sens:.2f} nm/V')}
+    {kv('Spring Constant', f'{p_spring_k:.4f} N/m')}
+    {kv('Curve Segment', p_curve_seg)}
+    {kv('Correct Tilt', str(p_correct_t))}
+    {kv('Correct App (overshoot)', str(p_correct_app))}
+    {kv('Offset Type', p_offset_type)}
+    {kv('Offset Min', p_offset_min)}
+    {kv('Offset Max', p_offset_max)}
+    {kv('PoC Method', p_poc_method)}
+    {kv('PoC Window', f'{p_poc_win:.1f} nm')}
+    {kv('PoC Sigma', str(p_poc_sigma))}
+    {kv('Fit Range Type', p_fit_range)}
+    {kv('Min Indentation', f'{p_min_ind:.2f} nm')}
+    {kv('Max Indentation', f'{p_max_ind:.2f} nm')}
+    {kv('Min Force', f'{p_min_f:.4f} nN')}
+    {kv('Max Force', f'{p_max_f:.4f} nN')}
+    {kv('Downsample Signal', str(p_downsample))}
+  </div>
+</div>"""
+
+            metadata_block = f"""
+<div class="section">
+  <h2>File Metadata (representative — first file)</h2>
+  <div class="meta-grid">
+    {kv('File Type', m_file_type)}
+    {kv('Spring Constant (file)', f'{m_spring_k} N/m')}
+    {kv('Deflection Sensitivity (file)', f'{m_defl_sens} nm/V')}
+    {kv('Height Channel Key', m_height_key)}
+  </div>
+</div>"""
+
+            results_table_rows = ''.join(
+                f'<tr><td>{fid}</td><td>{e}</td><td>{d0}</td><td>{rc}</td></tr>'
+                for fid, e, d0, rc in results_rows
+            )
+            results_block = f"""
+<div class="section">
+  <h2>Fit Results Summary ({len(results_rows)} files)</h2>
+  <table>
+    <tr><th>File</th><th>E (Pa)</th><th>d0 (m)</th><th>Reduced χ²</th></tr>
+    {results_table_rows}
+  </table>
+</div>"""
+
+            header_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Hertz Fit Export</title>
+  {css}
+</head>
+<body>
+  <h1>Hertz Fit Export — Files {idx_from + 1} to {idx_to + 1}</h1>
+  <p style="color:#666; margin-top:0;">Generated: {gen_time} &nbsp;|&nbsp; {n_files} file(s)</p>
+  {params_block}
+  {metadata_block}
+  {results_block}
+  <h2>Interactive Plots</h2>
+"""
+
+            plot_div = fig.to_html(
+                full_html=False,
+                config={'responsive': True, 'displayModeBar': True, 'displaylogo': False},
+                include_plotlyjs='cdn'
+            )
+
+            footer_html = "\n</body>\n</html>"
+
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write(header_html + plot_div + footer_html)
+
+            progress.close()
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
 
     def updateParams(self):
         # Updates params related to the current file

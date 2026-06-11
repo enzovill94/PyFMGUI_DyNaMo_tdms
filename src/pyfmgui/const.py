@@ -173,6 +173,10 @@ class TingFitParams(pTypes.GroupParameter):
             {'name': 'PoC Method', 'type': 'list', 'limits':['RoV', 'regulaFalsi']},
             {'name': 'PoC Window', 'type': 'int', 'value': 350, 'units':'nm'},
             {'name': 'Sigma', 'type': 'int', 'value': 0},
+            {'name': 'Curve Segment', 'type': 'list', 'limits':['extend', 'retract']},
+            {'name': 'Correct Tilt', 'type': 'bool', 'value':False},
+            {'name': 'Tilt Min Offset', 'type': 'float', 'value': 1e-08, 'units':'m'},
+            {'name': 'Tilt Max Offset', 'type': 'float', 'value': 1e-06, 'units':'m'},
             {'name': 'Fit Range Type', 'type': 'list', 'limits': ['full', 'indentation', 'force']},
             {'name': 'Min Indentation', 'type': 'float', 'value': None, 'units':'nm'},
             {'name': 'Max Indentation', 'type': 'float', 'value': None, 'units':'nm'},
@@ -196,11 +200,18 @@ class TingFitParams(pTypes.GroupParameter):
             {'name': 'Auto Init  Fluid. Exp.', 'type': 'bool', 'value':True},
             {'name': 'Init Fluid. Exp.', 'type': 'float', 'value': 0.20},
             {'name': 'Contact Offset', 'type': 'float', 'value': 1, 'units':'um'},
+            {'name': 'Retract Ind. Mask', 'type': 'float', 'value': None},
+            {'name': 'Retract Force Mask', 'type': 'float', 'value': None},
+            {'name': 'R-squared Threshold', 'type': 'float', 'value': 0.70},
+            {'name': 'Sample Size', 'type': 'float', 'value': 1, 'units':'um'},
             {'name': 'Smoothing Window', 'type': 'int', 'value': 5, 'units':'points'}
         ])
 
         self.poc_mode = self.param('PoC Method')
         self.poc_mode.sigValueChanged.connect(self.poc_mode_changed)
+
+        self.correct_tilt = self.param('Correct Tilt')
+        self.correct_tilt.sigValueChanged.connect(self.correct_tilt_changed)
 
         self.range_mode = self.param('Fit Range Type')
         self.range_mode.sigValueChanged.connect(self.range_mode_changed)
@@ -215,6 +226,7 @@ class TingFitParams(pTypes.GroupParameter):
         self.vdrag_corr.sigValueChanged.connect(self.vdrag_changed)
 
         self.poc_mode_changed()
+        self.correct_tilt_changed()
         self.range_mode_changed()
         self.fit_line_changed()
         self.model_type_changed()
@@ -227,6 +239,14 @@ class TingFitParams(pTypes.GroupParameter):
         else:
             self.param('Sigma').show(True)
             self.param('PoC Window').show(False)
+    
+    def correct_tilt_changed(self):
+        if self.correct_tilt.value():
+            self.param('Tilt Min Offset').show(True)
+            self.param('Tilt Max Offset').show(True)
+        else:
+            self.param('Tilt Min Offset').show(False)
+            self.param('Tilt Max Offset').show(False)
     
     def range_mode_changed(self):
         if self.range_mode.value() == 'full':

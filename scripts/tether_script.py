@@ -583,7 +583,7 @@ def process_single_file(filename, params=None, save_plots=False, output_dir=None
     except Exception as e:
         print (f'Error: {e}')
         print(" Could not load file, will try hs3 format...")
-        file = loadfile(filename, hs3_bool=True)
+        file = loadfile(filename, hs3_bool=False)
         # return None
 
     # Check file type

@@ -3052,183 +3052,284 @@ All file-specific parameters have been preserved."""
             progress_dialog.show()
             progress_dialog.update_progress(0, total_files, "Generating HTML report...")
             
-            # Create plotly figure with subplots
-            # Calculate grid layout (2 columns)
-            n_cols = 2
-            n_rows = (total_files + n_cols - 1) // n_cols
+            # Split into batches if more than 300 files
+            max_curves_per_file = 300
+            n_batches = (total_files + max_curves_per_file - 1) // max_curves_per_file
             
-            # Create subplot titles
-            subplot_titles = []
-            for i, filename in enumerate(self.file):
-                status = 'Good' if self.bool_good_curve[i] == 1 else ('Bad' if self.bool_good_curve[i] == 0 else 'Not Analyzed')
-                subplot_titles.append(f"{i+1}. {filename[:30]}... ({status})")
+            # Prepare base filename for multiple parts
+            html_base = os.path.splitext(html_path)[0]
+            html_ext = os.path.splitext(html_path)[1]
             
-            fig = make_subplots(
-                rows=n_rows, 
-                cols=n_cols,
-                subplot_titles=subplot_titles,
-                vertical_spacing=0.05,
-                horizontal_spacing=0.05,
-                specs=[[{"secondary_y": False} for _ in range(n_cols)] for _ in range(n_rows)]
-            )
+            exported_files = []
             
-            # Process each file
-            for file_idx, filepath in enumerate(self.file_path):
+            # Process each batch
+            for batch_idx in range(n_batches):
+                batch_start = batch_idx * max_curves_per_file
+                batch_end = min((batch_idx + 1) * max_curves_per_file, total_files)
+                batch_files = batch_end - batch_start
+                
+                # Determine filename for this batch
+                if n_batches > 1:
+                    current_html_path = f"{html_base}_part{batch_idx+1}_of_{n_batches}{html_ext}"
+                else:
+                    current_html_path = html_path
+                
                 progress_dialog.update_progress(
-                    file_idx, 
+                    batch_start, 
                     total_files, 
-                    f"Processing: {os.path.basename(filepath)}"
+                    f"Generating batch {batch_idx+1}/{n_batches}..."
                 )
                 
-                # Calculate subplot position
-                row = (file_idx // n_cols) + 1
-                col = (file_idx % n_cols) + 1
+                # Create plotly figure with subplots for this batch
+                # Calculate grid layout (2 columns)
+                n_cols = 2
+                n_rows = (batch_files + n_cols - 1) // n_cols
+            
+                # Create plotly figure with subplots for this batch
+                # Calculate grid layout (2 columns)
+                n_cols = 2
+                n_rows = (batch_files + n_cols - 1) // n_cols
+            
+                # Create subplot titles for this batch
+                subplot_titles = []
+                for i in range(batch_start, batch_end):
+                    status = 'Good' if self.bool_good_curve[i] == 1 else ('Bad' if self.bool_good_curve[i] == 0 else 'Not Analyzed')
+                    subplot_titles.append(f"{i+1}. {self.file[i][:30]}... ({status})")
                 
-                try:
-                    # Get file-specific parameters - CRITICAL: must get unique params per file!
-                    file_specific_params = self.get_file_parameters(filepath)
+                # Calculate appropriate spacing based on number of rows
+                # Maximum allowed: 1/(n_rows - 1), use 80% of max or 0.02, whichever is smaller
+                if n_rows > 1:
+                    max_vertical_spacing = 1.0 / (n_rows - 1)
+                    vertical_spacing = min(0.02, max_vertical_spacing * 0.8)
+                else:
+                    vertical_spacing = 0.05
+                
+                fig = make_subplots(
+                    rows=n_rows, 
+                    cols=n_cols,
+                    subplot_titles=subplot_titles,
+                    vertical_spacing=vertical_spacing,
+                    horizontal_spacing=0.05,
+                    specs=[[{"secondary_y": False} for _ in range(n_cols)] for _ in range(n_rows)]
+                )
+                
+                # Process each file in this batch
+                for batch_file_idx, file_idx in enumerate(range(batch_start, batch_end)):
+                    filepath = self.file_path[file_idx]
                     
-                    # Debug: Print to verify different parameters per file
-                    print(f"File {file_idx}: {os.path.basename(filepath)}")
-                    print(f"  Threshold: {file_specific_params.get('pl_threshold', 0)*1e9:.2f} nN")
-                    print(f"  Custom Calib: {file_specific_params.get('use_custom_calibration', False)}")
-                    print(f"  Has saved params: {filepath in self.file_parameters}")
+                    progress_dialog.update_progress(
+                        file_idx, 
+                        total_files, 
+                        f"Processing: {os.path.basename(filepath)}"
+                    )
                     
-                    # Run analysis with FILE-SPECIFIC parameters
-                    result = process_single_file(filepath, file_specific_params, save_plots=False)
-                    
-                    if result and result['plateaus']:
-                        # Get data
-                        rel_time = result['rel_time']
-                        defl_savitz = result['defl_savitz']
-                        plateaus = result['plateaus']
-                        df_plat = result['df_plat']
+                    # Calculate subplot position (relative to batch)
+                    row = (batch_file_idx // n_cols) + 1
+                    col = (batch_file_idx % n_cols) + 1
+                    # Calculate subplot position (relative to batch)
+                    row = (batch_file_idx // n_cols) + 1
+                    col = (batch_file_idx % n_cols) + 1
+                
+                    try:
+                        # Get file-specific parameters - CRITICAL: must get unique params per file!
+                        file_specific_params = self.get_file_parameters(filepath)
                         
-                        # Plot processed data
-                        fig.add_trace(
-                            go.Scatter(
-                                x=rel_time,
-                                y=defl_savitz * 1e9,  # Convert to nN
-                                mode='lines',
-                                name='Force Curve',
-                                line=dict(color='blue', width=1),
-                                showlegend=False
-                            ),
-                            row=row, col=col
-                        )
+                        # Debug: Print to verify different parameters per file
+                        print(f"File {file_idx}: {os.path.basename(filepath)}")
+                        print(f"  Threshold: {file_specific_params.get('pl_threshold', 0)*1e9:.2f} nN")
+                        print(f"  Custom Calib: {file_specific_params.get('use_custom_calibration', False)}")
+                        print(f"  Has saved params: {filepath in self.file_parameters}")
                         
-                        # Plot ALL detected plateaus (not just selected ones - this is for analysis review)
-                        colors = ['red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
-                        for i, (start, end) in enumerate(plateaus):
-                            color = colors[i % len(colors)]
+                        # Run analysis with FILE-SPECIFIC parameters
+                        result = process_single_file(filepath, file_specific_params, save_plots=False)
+                        
+                        if result and result['plateaus']:
+                            # Get data
+                            rel_time = result['rel_time']
+                            defl_savitz = result['defl_savitz']
+                            plateaus = result['plateaus']
                             
-                            # Plateau region
+                            # Plot processed data
                             fig.add_trace(
                                 go.Scatter(
-                                    x=rel_time[start:end],
-                                    y=defl_savitz[start:end] * 1e9,
+                                    x=rel_time,
+                                    y=defl_savitz * 1e9,  # Convert to nN
                                     mode='lines',
-                                    name=f'P{i+1}',
-                                    line=dict(color=color, width=2),
+                                    name='Force Curve',
+                                    line=dict(color='blue', width=1),
                                     showlegend=False
                                 ),
                                 row=row, col=col
                             )
                             
-                            # Average line
-                            plateau_avg = np.mean(defl_savitz[start:end]) * 1e9
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=[rel_time[start], rel_time[end-1]],
-                                    y=[plateau_avg, plateau_avg],
-                                    mode='lines',
-                                    name=f'Avg{i+1}',
-                                    line=dict(color=color, width=2, dash='dash'),
-                                    showlegend=False
-                                ),
+                            # Plot ALL detected plateaus (not just selected ones - this is for analysis review)
+                            colors = ['red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+                            for i, (start, end) in enumerate(plateaus):
+                                color = colors[i % len(colors)]
+                                
+                                # Plateau region
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=rel_time[start:end],
+                                        y=defl_savitz[start:end] * 1e9,
+                                        mode='lines',
+                                        name=f'P{i+1}',
+                                        line=dict(color=color, width=2),
+                                        showlegend=False
+                                    ),
+                                    row=row, col=col
+                                )
+                                
+                                # Average line
+                                plateau_avg = np.mean(defl_savitz[start:end]) * 1e9
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=[rel_time[start], rel_time[end-1]],
+                                        y=[plateau_avg, plateau_avg],
+                                        mode='lines',
+                                        name=f'Avg{i+1}',
+                                        line=dict(color=color, width=2, dash='dash'),
+                                        showlegend=False
+                                    ),
+                                    row=row, col=col
+                                )
+                            
+                            # Update axes for this subplot
+                            fig.update_xaxes(title_text="Time (s)", row=row, col=col)
+                            fig.update_yaxes(title_text="Force (nN)", row=row, col=col)
+                            
+                            # Add parameter annotation showing file-specific settings
+                            param_text = (
+                                f"Threshold: {file_specific_params.get('pl_threshold', 0)*1e9:.1f} nN<br>"
+                                f"Min length: {file_specific_params.get('pl_min_length', 0):.0f}<br>"
+                                f"Max force: {file_specific_params.get('pl_max_force', 0)*1e9:.1f} nN"
+                            )
+                            
+                            # Add text annotation in top-right corner of subplot
+                            fig.add_annotation(
+                                text=param_text,
+                                xref=f"x{batch_file_idx+1} domain", 
+                                yref=f"y{batch_file_idx+1} domain",
+                                x=0.98, y=0.98,
+                                xanchor='right',
+                                yanchor='top',
+                                showarrow=False,
+                                font=dict(size=8, color="black"),
+                                bgcolor="rgba(255, 255, 255, 0.8)",
+                                bordercolor="gray",
+                                borderwidth=1,
+                                borderpad=2,
                                 row=row, col=col
                             )
-                        
-                        # Update axes for this subplot
-                        fig.update_xaxes(title_text="Time (s)", row=row, col=col)
-                        fig.update_yaxes(title_text="Force (nN)", row=row, col=col)
-                        
-                        # Add parameter annotation showing file-specific settings
-                        param_text = (
-                            f"Threshold: {file_specific_params.get('pl_threshold', 0)*1e9:.1f} nN<br>"
-                            f"Min length: {file_specific_params.get('pl_min_length', 0):.0f}<br>"
-                            f"Max force: {file_specific_params.get('pl_max_force', 0)*1e9:.1f} nN"
-                        )
-                        
-                        # Add text annotation in top-right corner of subplot
+                            
+                        else:
+                            # No plateaus found - plot empty with annotation
+                            fig.add_annotation(
+                                text="No plateaus detected",
+                                xref=f"x{batch_file_idx+1}", yref=f"y{batch_file_idx+1}",
+                                x=0.5, y=0.5,
+                                showarrow=False,
+                                font=dict(size=12, color="red"),
+                                row=row, col=col
+                            )
+                            
+                    except Exception as e:
+                        # Error processing file - add error annotation
                         fig.add_annotation(
-                            text=param_text,
-                            xref=f"x{file_idx+1} domain", 
-                            yref=f"y{file_idx+1} domain",
-                            x=0.98, y=0.98,
-                            xanchor='right',
-                            yanchor='top',
-                            showarrow=False,
-                            font=dict(size=8, color="black"),
-                            bgcolor="rgba(255, 255, 255, 0.8)",
-                            bordercolor="gray",
-                            borderwidth=1,
-                            borderpad=2,
-                            row=row, col=col
-                        )
-                        
-                    else:
-                        # No plateaus found - plot empty with annotation
-                        fig.add_annotation(
-                            text="No plateaus detected",
-                            xref=f"x{file_idx+1}", yref=f"y{file_idx+1}",
+                            text=f"Error: {str(e)[:50]}",
+                            xref=f"x{batch_file_idx+1}", yref=f"y{batch_file_idx+1}",
                             x=0.5, y=0.5,
                             showarrow=False,
-                            font=dict(size=12, color="red"),
+                            font=dict(size=10, color="red"),
                             row=row, col=col
                         )
-                        
-                except Exception as e:
-                    # Error processing file - add error annotation
-                    fig.add_annotation(
-                        text=f"Error: {str(e)[:50]}",
-                        xref=f"x{file_idx+1}", yref=f"y{file_idx+1}",
-                        x=0.5, y=0.5,
-                        showarrow=False,
-                        font=dict(size=10, color="red"),
-                        row=row, col=col
-                    )
+                        # Error processing file - add error annotation
+                        fig.add_annotation(
+                            text=f"Error: {str(e)[:50]}",
+                            xref=f"x{batch_file_idx+1}", yref=f"y{batch_file_idx+1}",
+                            x=0.5, y=0.5,
+                            showarrow=False,
+                            font=dict(size=10, color="red"),
+                            row=row, col=col
+                        )
+                
+                # Update overall layout for this batch
+                good_count = int(np.sum(self.bool_good_curve == 1))
+                bad_count = int(np.sum(self.bool_good_curve == 0))
+                
+                batch_title = "Tether Analysis Session Report"
+                if n_batches > 1:
+                    batch_title += f" - Part {batch_idx+1} of {n_batches} (Files {batch_start+1}-{batch_end})"
+                else:
+                    batch_title += f" - {total_files} files ({good_count} good, {bad_count} bad)"
+                batch_title += f"<br><sub>Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</sub>"
+                
+                fig.update_layout(
+                    title_text=batch_title,
+                    showlegend=False,
+                    height=400 * n_rows,  # Adjust height based on number of rows
+                    width=1600,
+                    font=dict(size=10)
+                )
+                
+                # Save HTML file for this batch
+                progress_dialog.update_progress(
+                    batch_end, 
+                    total_files, 
+                    f"Saving batch {batch_idx+1}/{n_batches}..."
+                )
+                
+                pio.write_html(
+                    fig, 
+                    current_html_path,
+                    config={'responsive': True, 'displayModeBar': True, 'displaylogo': False}
+                )
+                
+                exported_files.append(current_html_path)
             
-            # Update overall layout
+            # Show completion
             good_count = int(np.sum(self.bool_good_curve == 1))
             bad_count = int(np.sum(self.bool_good_curve == 0))
             
-            fig.update_layout(
-                title_text=f"Tether Analysis Session Report - {total_files} files ({good_count} good, {bad_count} bad)<br><sub>Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</sub>",
-                showlegend=False,
-                height=400 * n_rows,  # Adjust height based on number of rows
-                width=1600,
-                font=dict(size=10)
-            )
+            if n_batches > 1:
+                completion_msg = f"HTML report exported in {n_batches} parts!\n\n"
+                for i, file in enumerate(exported_files, 1):
+                    completion_msg += f"Part {i}: {os.path.basename(file)}\n"
+            else:
+                completion_msg = f"HTML report saved!\n{os.path.basename(exported_files[0])}"
             
-            # Save HTML file
-            progress_dialog.update_progress(total_files, total_files, "Saving HTML file...")
-            
-            pio.write_html(
-                fig, 
-                html_path,
-                config={'responsive': True, 'displayModeBar': True, 'displaylogo': False}
-            )
-            
-            # Show completion
-            progress_dialog.set_final_message(f"HTML report saved!\\n{os.path.basename(html_path)}")
+            progress_dialog.set_final_message(completion_msg)
             QTimer.singleShot(2000, progress_dialog.close)
             
-            self.status_label.setText(f"HTML report exported: {os.path.basename(html_path)}")
-            self.results_text.setText(f"""HTML Report Exported Successfully!
+            if n_batches > 1:
+                self.status_label.setText(f"HTML report exported in {n_batches} parts")
+                self.results_text.setText(f"""HTML Report Exported Successfully!
 
-File: {os.path.basename(html_path)}
-Location: {os.path.dirname(html_path)}
+Total files: {total_files}
+Split into: {n_batches} parts (max {max_curves_per_file} curves per file)
+Location: {os.path.dirname(exported_files[0])}
+
+Files created:
+{chr(10).join(f'  • {os.path.basename(f)}' for f in exported_files)}
+
+Report Contents:
+• Good files: {good_count}
+• Bad files: {bad_count}
+• Interactive plots: All curves with plateau overlays
+
+Each HTML file can be opened in any web browser and includes:
+- Interactive zoom/pan controls
+- Individual curve analysis results
+- Color-coded plateau detection
+- Session metadata
+
+Open the files to view your complete analysis session!""")
+            else:
+                self.status_label.setText(f"HTML report exported: {os.path.basename(exported_files[0])}")
+                self.results_text.setText(f"""HTML Report Exported Successfully!
+
+File: {os.path.basename(exported_files[0])}
+Location: {os.path.dirname(exported_files[0])}
 
 Report Contents:
 • Total files: {total_files}
